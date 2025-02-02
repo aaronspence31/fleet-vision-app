@@ -1,0 +1,47 @@
+.driverListContainer{
+    padding: 10px;
+    border: 2px solid lightgray;
+    border-radius: 16px;
+}
+
+.avatar{
+    cursor: pointer;
+    &:hover{
+        transform: scale(1.2)
+    }
+}
+
+.driverListItem{
+    display: flex;
+    flex-direction: row;
+    justify-content: space-between;
+    gap: 20px;
+    padding: 10px 30px;
+    border-bottom: 1px solid gray;
+
+    &:last-of-type {
+        border-bottom: none;
+        border-radius: 0 0 8px 8px;
+    }
+
+    &:first-of-type {
+        border-radius: 8px 8px 0 0;
+    }
+}
+
+.driverListInfoContainer{
+    display: flex;
+    flex-direction: column;
+    padding: 0 20px;
+    justify-content: center;
+}
+
+.driverListItemText{
+    font-size: 16px;
+    text-align: center;
+}
+
+.driverListItemSubtext{
+    text-align: center;
+    font-size: 10px;
+}

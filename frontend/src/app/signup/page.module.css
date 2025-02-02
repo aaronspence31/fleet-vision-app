@@ -1,0 +1,39 @@
+.pageContainer {
+  width: 100vw;
+  height: 100vh;
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.rightContainer {
+  width: 50%;
+  background-color: var(--background-dark);
+  display: flex;
+  align-items: flex-start;
+  justify-content: flex-start;
+  flex-direction: column;
+  position: relative;
+  padding: 20px;
+}
+
+.titleContainer {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  margin-top: 10px;
+}
+
+.title {
+  font-size: 36px;
+  font-weight: 500;
+  color: white;
+}
+
+
+.formFieldContainer {
+  margin-bottom: 10px;
+}

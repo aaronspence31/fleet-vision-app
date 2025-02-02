@@ -1,0 +1,52 @@
+.container {
+  padding: 10px;
+  border: 2px solid gray;
+  border-radius: 16px;
+  background-color: white;
+  
+}
+
+.ErorrContainer {
+  display: flex;
+  flex-direction: row;
+  border-bottom: 1px solid black;
+  justify-content: center;
+  align-items: center;
+  padding: 10px;
+  gap: 5px;
+  &:hover{
+    background-color: lightgray;
+    cursor: pointer;
+  }
+  &:last-of-type {
+    border-bottom: none;
+  }
+
+
+}
+
+.errorListContainer{
+  overflow-y: scroll;
+  max-height: 350px;
+  border-radius: 8px;
+  border: 1px solid gray;
+  &::-webkit-scrollbar{
+    display: none;
+  }
+}
+
+.errorTime {
+  font-size: 14px;
+  text-align: center;
+}
+
+.errorDescription{
+  width: 250px;
+  border-right: 1px solid black;
+  border-left: 1px solid black;
+  text-align: center;
+  height: 100%;
+  padding: 0 4px;
+}
+
+

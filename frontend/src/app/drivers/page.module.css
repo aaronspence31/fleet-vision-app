@@ -1,0 +1,150 @@
+.container {
+  display: flex;
+  flex-direction: row;
+  height: 85vh;
+  gap: 32px;
+}
+
+.leftBox {
+  flex: 1 1 0px;
+  height: 100%;
+}
+
+.rightBox {
+  flex: 1 1 0px;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  background-color: white;
+  border: 2px solid lightgray;
+  border-radius: 16px;
+}
+
+.status {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 6px;
+}
+
+.statusTitle {
+  font-size: 14px;
+}
+
+.statusIcon {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+}
+
+.infoContainer {
+  display: flex;
+  gap: 32px;
+  padding: 10px;
+}
+
+.innerInfoContainer {
+  display: flex;
+  flex: 1 1 0px;
+  min-width: 200px;
+  justify-content: center;
+  gap: 4px;
+}
+
+.behaviourListContainer {
+  gap: 8px;
+  display: flex;
+  flex-direction: column;
+}
+
+.behaviourPill {
+  display: flex;
+  border: 1px solid gray;
+  border-radius: 8px;
+  padding: 10px 60px;
+  justify-content: space-between;
+  min-width: 60%;
+}
+
+.behaviourContainer {
+  display: flex;
+  flex: 1 1 0px;
+  gap: 32px;
+  margin-top: 20px;
+  padding: 16px 60px;
+  border: 2px solid gray;
+  border-radius: 20px;
+  &:hover {
+    background-color: lightgray;
+    cursor: pointer;
+  }
+}
+
+.behaviourTitleBox {
+  flex: 1 1 0px;
+  padding: 20px;
+  display: flex;
+  justify-content: center;
+  flex-direction: column;
+  align-items: center;
+
+  .largeTitle {
+    font-weight: 900;
+    font-size: 80px;
+  }
+}
+
+.searchBar {
+  padding: 8px;
+  display: flex;
+}
+
+.safetyScoreContainer {
+  height: 200px;
+  width: 200px;
+  border-radius: 50%;
+  border-width: 25px;
+  border-style: solid;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  margin: 25px;
+}
+
+.safetyScore {
+  font-size: 60px;
+  font-weight: 600;
+}
+
+.safetyScoreMessage {
+  font-size: 24px;
+  margin-top: 20px;
+}
+
+.behaviourList {
+  margin-top: 20px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 5px;
+}
+
+.behaviourListTitle {
+  font-size: 40px;
+  font-weight: 600;
+  margin-bottom: 20px;
+}
+
+.backButton {
+  border: 1px solid gray;
+  padding: 12px;
+  border-radius: 20px;
+  margin-top: 20px;
+  display: inline-block;
+
+  &:hover {
+    border-color: black;
+    transform: scale(1.1);
+    cursor: pointer;
+  }
+}
