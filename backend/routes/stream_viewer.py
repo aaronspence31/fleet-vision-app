@@ -26,11 +26,10 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Constants
-# FACE_STREAM_URL = "http://172.20.10.6/stream"  # ai thinker hotspot aaron
+FACE_STREAM_URL = "http://172.20.10.8/stream"  # ai thinker hotspot aaron
 # FACE_STREAM_URL = "http://192.168.0.102/stream"  # ai thinker home wifi aaron
 # FACE_STREAM_URL = "http://192.168.0.110/stream"  # wrover home wifi aaron
 # FACE_STREAM_URL = "http://172.20.10.4/stream"  # wrover hotspot aaron
-FACE_STREAM_URL = "http://172.20.10.3/stream"
 BODY_STREAM_URL = "http://172.20.10.3/stream"  # ai thinker hotspot aaron
 # BODY_STREAM_URL = "http://192.168.0.104/stream"  # ai thinker home wifi aaron
 # BODY_STREAM_URL = "http://192.168.0.109/stream"  # wrover home wifi aaron
