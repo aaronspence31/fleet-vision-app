@@ -194,7 +194,8 @@ def preprocess_frame_clip(frame, preprocess):
     return processed.unsqueeze(0)
 
 
-# TODO: this needs to be updated to get rid of any batching and events
+# TODO: this needs to be updated to get rid of any batching and events as these are causing issues
+# TODO: this also needs to be updated to use the binary eyes state model correctly if possible with this model
 # process the face stream
 # use cv2 haarcascade classifier to detect eyes
 # then use the binary_eyes_state_model to predict the state of each eye that was detected
