@@ -14,7 +14,7 @@ from PIL import Image
 from queue import Queue
 from firestore import body_drive_sessions, face_drive_sessions
 from helpers.model import classify_main_batch
-from flask import Blueprint, Response, make_response
+from flask import Blueprint, Response, make_response, request
 from transformers import ViTFeatureExtractor, ViTForImageClassification
 
 stream_viewer = Blueprint("stream_viewer", __name__)
@@ -24,6 +24,8 @@ logging.basicConfig(
     level=logging.DEBUG, format="%(asctime)s - %(levelname)s - %(message)s"
 )
 logger = logging.getLogger(__name__)
+
+obd_data_buffer = Queue(maxsize=100)  # Buffer for OBD data
 
 # Constants
 # FACE_STREAM_URL = "http://172.20.10.8/stream"  # ai thinker hotspot aaron
@@ -540,4 +542,37 @@ def body_stream_clip_view():
                 pass
             time.sleep(0.1)  # Prevent CPU thrashing
 
+    return Response(generate(), mimetype="text/event-stream")
+
+@stream_viewer.route("/obd_data", methods=['POST'])
+def receive_obd_data():
+    try:
+        data = request.get_json()
+        required_fields = ['speed', 'rpm', 'timestamp']
+        if all(field in data for field in required_fields):
+            if obd_data_buffer.full():
+                obd_data_buffer.get_nowait()
+            obd_data_buffer.put({
+                'speed': data['speed'],
+                'rpm': data['rpm'],
+                'timestamp': data['timestamp']
+            })
+            return make_response("Data received", 200)
+        return make_response("Missing required fields", 400)
+    except Exception as e:
+        logger.error(f"Error processing OBD data: {str(e)}")
+        return make_response("Error processing data", 400)
+
+@stream_viewer.route("/obd_stream_view")
+def obd_stream_view():
+    def generate():
+        while True:
+            try:
+                while not obd_data_buffer.empty():
+                    data = obd_data_buffer.get_nowait()
+                    yield f"data: {json.dumps(data)}\n\n"
+            except Queue.Empty:
+                pass
+            time.sleep(0.1)
+    
     return Response(generate(), mimetype="text/event-stream")
