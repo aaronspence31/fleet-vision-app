@@ -194,8 +194,7 @@ def preprocess_frame_clip(frame, preprocess):
     return processed.unsqueeze(0)
 
 
-# TODO: this needs to be updated to drop frames from opencv, for example only take every 5th frame
-# this should be done the same way as we are doing it for the body stream
+# TODO: this needs to be updated to get rid of any batching and events
 # process the face stream
 # use cv2 haarcascade classifier to detect eyes
 # then use the binary_eyes_state_model to predict the state of each eye that was detected
