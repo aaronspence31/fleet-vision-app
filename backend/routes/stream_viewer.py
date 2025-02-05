@@ -556,6 +556,24 @@ def receive_obd_data():
                 'speed': data['speed'],
                 'rpm': data['rpm'],
                 'timestamp': data['timestamp']
+                
+                # 'engine_rpm': data['engine_rpm'],
+                # 'vehicle_speed': data['vehicle_speed'],
+                # 'coolant_temp': data['coolant_temp'],
+                # 'fuel_status': data['fuel_status'],
+                # 'intake_air_temp': data['intake_air_temp'],
+                # 'mass_air_flow': data['mass_air_flow'],
+                # 'engine_load': data['engine_load'],
+                # 'fuel_rail_pressure': data['fuel_rail_pressure'],
+                # 'fuel_rail_gauge': data['fuel_rail_gauge'],
+                # 'fuel_level_input': data['fuel_level_input'],
+                # 'barometric_pressure': data['barometric_pressure'],
+                # 'distance_dtc': data['distance_dtc'],
+                # 'distance_mil': data['distance_mil'],
+                # 'trans_fluid_temp': data['trans_fluid_temp'],
+                # 'trans_gear_ratio': data['trans_gear_ratio'],
+                # 'wheel_speed': data['wheel_speed'],
+                # 'security_status': data['security_status']
             })
             return make_response("Data received", 200)
         return make_response("Missing required fields", 400)
