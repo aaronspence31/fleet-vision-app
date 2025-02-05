@@ -4,19 +4,10 @@ import { Box, Typography, Button } from "@mui/material";
 import styles from "./page.module.css";
 import DisplayCard from "@/components/common/DisplayCard";
 import { getData, getDocumentsByRecentSession } from "@/utils/firestore";
-import { useRouter } from "next/navigation";
-import {
-  Person,
-  ExitToApp,
-  Dashboard as DashboardIcon,
-  TimeToLeave,
-  Face,
-  Accessibility,
-} from "@mui/icons-material";
-import Image from "next/image";
 import { Anonymous_Pro } from "next/font/google";
 import { PieChart } from "@mui/x-charts/PieChart";
 import { LineChart } from "@mui/x-charts/LineChart";
+import SideBar from "@/components/SideBar/SideBar";
 import {
   FrameBatchType,
   getDateTimeValues,
@@ -53,7 +44,10 @@ function SessionPill(session: FrameBatchType[] | null) {
       >
         Safety Score: {safetyScore}
       </Typography>
-      <Typography className={anonymous.className}>
+      <Typography
+        className={anonymous.className}
+        sx={{ typography: { xl: "body1", lg: "body2" } }}
+      >
         {`${startDate} ${startTime}   →   ${endDate} ${endTime}`}
       </Typography>
     </Box>
@@ -67,9 +61,9 @@ export default function Dashboard() {
     null
   );
 
-  const router = useRouter();
-
   useEffect(() => {
+    console.log("Loading Data");
+    console.log("Width: ", window.innerWidth);
     const loadData = async () => {
       const localBodyData: FrameBatchType[] = await getData(
         "body_drive_sessions"
@@ -87,87 +81,6 @@ export default function Dashboard() {
 
   return (
     <Box className={styles.pageContainer}>
-      <Box className={styles.sideBar}>
-        <Box className={styles.FlexBoxRow} sx={{ color: "#C3D4C6" }}>
-          <Image
-            src="/images/fleet-vision-logo.png"
-            width={90}
-            height={80}
-            alt="fleet vision logo"
-          />
-          <Typography
-            className={anonymous.className}
-            sx={{ typography: { xl: "h4", lg: "h5" } }}
-          >
-            Fleet Vision
-          </Typography>
-        </Box>
-        <Box style={{ display: "flex", flexDirection: "column", gap: 15 }}>
-          <Box className={`${styles.iconContainer} ${styles.selectedPage}`}>
-            <DashboardIcon className={styles.icon} />
-            <Typography
-              className={anonymous.className}
-              sx={{ typography: { xl: "h5", lg: "h6" } }}
-            >
-              Dashboard
-            </Typography>
-          </Box>
-          <Box className={styles.iconContainer}>
-            <TimeToLeave className={styles.icon} />
-            <Typography
-              className={anonymous.className}
-              sx={{ typography: { xl: "h5", lg: "h6" } }}
-            >
-              Vehicle Information
-            </Typography>
-          </Box>
-          <Box
-            className={styles.iconContainer}
-            onClick={() => router.push("/bodydemo")}
-          >
-            <Accessibility className={styles.icon} />
-            <Typography
-              className={anonymous.className}
-              sx={{ typography: { xl: "h5", lg: "h6" } }}
-            >
-              Body Stream
-            </Typography>
-          </Box>
-          <Box
-            className={styles.iconContainer}
-            onClick={() => router.push("/demo")}
-          >
-            <Face className={styles.icon} />
-            <Typography
-              className={anonymous.className}
-              sx={{ typography: { xl: "h5", lg: "h6" } }}
-            >
-              Face Stream
-            </Typography>
-          </Box>
-        </Box>
-        <Box style={{ display: "flex", flexDirection: "column", gap: 15 }}>
-          <Box className={styles.iconContainer}>
-            <Person className={styles.icon} />
-            <Typography
-              className={anonymous.className}
-              sx={{ typography: { xl: "h5", lg: "h6" } }}
-            >
-              Profile
-            </Typography>
-          </Box>
-          <Box className={styles.iconContainer}>
-            <ExitToApp className={styles.icon} style={{ padding: 15 }} />
-
-            <Typography
-              className={anonymous.className}
-              sx={{ typography: { xl: "h5", lg: "h6" } }}
-            >
-              Logout
-            </Typography>
-          </Box>
-        </Box>
-      </Box>
       <Box className={styles.pageContent}>
         <Box className={styles.pageHeaderBar}>
           <Typography
@@ -191,7 +104,9 @@ export default function Dashboard() {
               className={anonymous.className}
               style={{ color: "#01b5e1" }}
             >
-              {getSafetyScoreBySession(recentSession)}
+              {getSafetyScoreBySession(
+                recentSession || ([] as FrameBatchType[])
+              )}
             </Typography>
           </Box>
         </Box>
@@ -208,13 +123,23 @@ export default function Dashboard() {
                 bottomAxis={null}
                 series={[
                   {
-                    data: getSafetyScoreProgression(recentSession || []),
+                    data: getSafetyScoreProgression(
+                      recentSession || ([] as FrameBatchType[])
+                    ),
                   },
                 ]}
                 width={500}
                 height={250}
                 disableAxisListener
               />
+              <Typography
+                className={`${anonymous.className} ${styles.DistractionBreakDownMessage}`}
+                sx={{ typography: { xl: "body1", lg: "body2" } }}
+              >
+                Each point represents the safety score during the{" "}
+                <span style={{ fontStyle: "italic" }}>Xth</span> minute of
+                driving
+              </Typography>
             </Box>
           </DisplayCard>
           <DisplayCard>
@@ -257,7 +182,10 @@ export default function Dashboard() {
             </Box>
           </DisplayCard>
           <DisplayCard>
-            <Box className={styles.FlexBoxRow}>
+            <Box
+              className={styles.FlexBoxRow}
+              style={{ width: "100%", height: "100%" }}
+            >
               <Typography
                 className={`${anonymous.className} ${styles.DistractionBreakdownTitle}`}
                 sx={{ typography: { xl: "h3", lg: "h4" } }}
@@ -269,45 +197,48 @@ export default function Dashboard() {
                 </span>
               </Typography>
 
-              <PieChart
-                series={[
-                  {
-                    data: countFrameOccurrences(bodyData),
-                    innerRadius: 30,
-                    outerRadius: 100,
-                    paddingAngle: 5,
-                    cornerRadius: 5,
-                    highlightScope: { fade: "global", highlight: "item" },
-                    faded: {
+              <Box
+                style={{
+                  minWidth: "60%",
+                  minHeight: "100%",
+                  width: "60%",
+                  height: "100%",
+                  maxWidth: "60%",
+                  maxHeight: "100%",
+                }}
+              >
+                <PieChart
+                  series={[
+                    {
+                      data: countFrameOccurrences(
+                        bodyData || ([] as FrameBatchType[])
+                      ),
                       innerRadius: 30,
-                      additionalRadius: -30,
-                      color: "gray",
+                      outerRadius: 100,
+                      paddingAngle: 5,
+                      cornerRadius: 5,
+                      cy: "35%",
+                      highlightScope: { fade: "global", highlight: "item" },
+                      faded: {
+                        innerRadius: 30,
+                        additionalRadius: -30,
+                        color: "gray",
+                      },
                     },
-                    label: (location) => {
-                      if (location === "legend") {
-                        return "Legend Label";
-                      } else if (location === "tooltip") {
-                        return "Tooltip Label";
-                      }
-                      return "Default Label";
+                  ]}
+                  sx={{
+                    "& .MuiChartsLegend-series text": {
+                      fontSize: "0.7em !important",
                     },
-                  },
-                ]}
-                sx={{
-                  "& .MuiChartsLegend-series text": {
-                    fontSize: "0.7em !important",
-                  },
-                }}
-                slotProps={{
-                  legend: {
-                    direction: "row",
-                    position: { vertical: "bottom", horizontal: "middle" },
-                    padding: 0,
-                  },
-                }}
-                width={400}
-                height={350}
-              />
+                  }}
+                  slotProps={{
+                    legend: {
+                      direction: "row",
+                      position: { vertical: "bottom", horizontal: "middle" },
+                    },
+                  }}
+                />
+              </Box>
             </Box>
           </DisplayCard>
         </Box>

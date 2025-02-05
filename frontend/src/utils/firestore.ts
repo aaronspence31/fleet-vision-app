@@ -1,6 +1,6 @@
 import { getDocs, query, collection, orderBy, limit, where } from 'firebase/firestore';
 import { FrameBatchType } from './general';
-import { db } from "@/lib/firebase/firebase";
+import { db } from "@/lib/firebase";
 
 export const getData = async (collectionName: string) => {
     const querySnapshot = await getDocs(collection(db, collectionName));
