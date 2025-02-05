@@ -47,7 +47,7 @@ function SessionPill(session: FrameBatchType[] | null) {
   return (
     <Box className={styles.sessionPill}>
       <Typography
-        variant="h6"
+        sx={{ typography: { xl: "body1", lg: "body2" } }}
         style={{ color: "#3d8cff" }}
         className={anonymous.className}
       >
@@ -95,20 +95,29 @@ export default function Dashboard() {
             height={80}
             alt="fleet vision logo"
           />
-          <Typography className={anonymous.className} variant="h4">
+          <Typography
+            className={anonymous.className}
+            sx={{ typography: { xl: "h4", lg: "h5" } }}
+          >
             Fleet Vision
           </Typography>
         </Box>
         <Box style={{ display: "flex", flexDirection: "column", gap: 15 }}>
           <Box className={`${styles.iconContainer} ${styles.selectedPage}`}>
             <DashboardIcon className={styles.icon} />
-            <Typography className={anonymous.className} variant="h5">
+            <Typography
+              className={anonymous.className}
+              sx={{ typography: { xl: "h5", lg: "h6" } }}
+            >
               Dashboard
             </Typography>
           </Box>
           <Box className={styles.iconContainer}>
             <TimeToLeave className={styles.icon} />
-            <Typography className={anonymous.className} variant="h5">
+            <Typography
+              className={anonymous.className}
+              sx={{ typography: { xl: "h5", lg: "h6" } }}
+            >
               Vehicle Information
             </Typography>
           </Box>
@@ -117,7 +126,10 @@ export default function Dashboard() {
             onClick={() => router.push("/bodydemo")}
           >
             <Accessibility className={styles.icon} />
-            <Typography className={anonymous.className} variant="h5">
+            <Typography
+              className={anonymous.className}
+              sx={{ typography: { xl: "h5", lg: "h6" } }}
+            >
               Body Stream
             </Typography>
           </Box>
@@ -126,7 +138,10 @@ export default function Dashboard() {
             onClick={() => router.push("/demo")}
           >
             <Face className={styles.icon} />
-            <Typography className={anonymous.className} variant="h5">
+            <Typography
+              className={anonymous.className}
+              sx={{ typography: { xl: "h5", lg: "h6" } }}
+            >
               Face Stream
             </Typography>
           </Box>
@@ -134,14 +149,20 @@ export default function Dashboard() {
         <Box style={{ display: "flex", flexDirection: "column", gap: 15 }}>
           <Box className={styles.iconContainer}>
             <Person className={styles.icon} />
-            <Typography className={anonymous.className} variant="h5">
+            <Typography
+              className={anonymous.className}
+              sx={{ typography: { xl: "h5", lg: "h6" } }}
+            >
               Profile
             </Typography>
           </Box>
           <Box className={styles.iconContainer}>
             <ExitToApp className={styles.icon} style={{ padding: 15 }} />
 
-            <Typography className={anonymous.className} variant="h5">
+            <Typography
+              className={anonymous.className}
+              sx={{ typography: { xl: "h5", lg: "h6" } }}
+            >
               Logout
             </Typography>
           </Box>
@@ -149,12 +170,15 @@ export default function Dashboard() {
       </Box>
       <Box className={styles.pageContent}>
         <Box className={styles.pageHeaderBar}>
-          <Typography variant="h3" className={anonymous.className}>
+          <Typography
+            sx={{ typography: { xl: "h3", lg: "h4" } }}
+            className={anonymous.className}
+          >
             Dashboard
           </Typography>
           <Box className={styles.safetyScoreDisplay}>
             <Typography
-              variant="h3"
+              sx={{ typography: { xl: "h3", lg: "h4" } }}
               className={anonymous.className}
               style={{ lineHeight: "2.5rem", marginRight: "2rem" }}
             >
@@ -163,7 +187,7 @@ export default function Dashboard() {
               Score
             </Typography>
             <Typography
-              variant="h1"
+              sx={{ typography: { xl: "h1", lg: "h2" } }}
               className={anonymous.className}
               style={{ color: "#01b5e1" }}
             >
@@ -176,7 +200,7 @@ export default function Dashboard() {
             <Box className={styles.safetyScoreOverSessionContainer}>
               <Typography
                 className={`${anonymous.className} ${styles.DistractionBreakdownTitle}`}
-                variant="h3"
+                sx={{ typography: { xl: "h3", lg: "h4" } }}
               >
                 Safety Score Progression
               </Typography>
@@ -196,7 +220,7 @@ export default function Dashboard() {
           <DisplayCard>
             <Typography
               className={`${anonymous.className} ${styles.DistractionBreakdownTitle}`}
-              variant="h3"
+              sx={{ typography: { xl: "h3", lg: "h4" } }}
             >
               OBD <br />2<br />
               Stuff
@@ -214,7 +238,7 @@ export default function Dashboard() {
             >
               <Typography
                 className={`${anonymous.className} ${styles.DistractionBreakdownTitle}`}
-                variant="h3"
+                sx={{ typography: { xl: "h3", lg: "h4" } }}
               >
                 Recent Session Scores
               </Typography>
@@ -236,7 +260,7 @@ export default function Dashboard() {
             <Box className={styles.FlexBoxRow}>
               <Typography
                 className={`${anonymous.className} ${styles.DistractionBreakdownTitle}`}
-                variant="h3"
+                sx={{ typography: { xl: "h3", lg: "h4" } }}
               >
                 Distraction <br /> Event <br /> Breakdown
                 <br />
