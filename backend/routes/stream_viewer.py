@@ -29,10 +29,10 @@ obd_data_buffer = Queue(maxsize=100)  # Buffer for OBD data
 
 # Constants
 # FACE_STREAM_URL = "http://172.20.10.8/stream"  # ai thinker hotspot aaron
-FACE_STREAM_URL = "http://192.168.0.111/stream"  # ai thinker home wifi aaron
+FACE_STREAM_URL = "http://192.168.0.108/stream"  # ai thinker home wifi aaron
 # FACE_STREAM_URL = "http://172.20.10.4/stream"  # wrover hotspot aaron
 # BODY_STREAM_URL = "http://172.20.10.3/stream"  # ai thinker hotspot aaron
-BODY_STREAM_URL = "http://192.168.0.112/stream"  # ai thinker home wifi aaron
+BODY_STREAM_URL = "http://192.168.0.108/stream"  # ai thinker home wifi aaron
 # BODY_STREAM_URL = "http://172.20.10.5/stream"  # wrover hotspot aaron
 BATCH_SIZE_EYES_STATE = 1
 EYES_STATE_STREAM_PROCESS_INTERVAL = 5
@@ -556,42 +556,45 @@ def body_stream_clip_view():
 
     return Response(generate(), mimetype="text/event-stream")
 
-@stream_viewer.route("/obd_data", methods=['POST'])
+
+@stream_viewer.route("/obd_data", methods=["POST"])
 def receive_obd_data():
     try:
         data = request.get_json()
-        required_fields = ['speed', 'rpm', 'timestamp']
+        required_fields = ["speed", "rpm", "timestamp"]
         if all(field in data for field in required_fields):
             if obd_data_buffer.full():
                 obd_data_buffer.get_nowait()
-            obd_data_buffer.put({
-                'speed': data['speed'],
-                'rpm': data['rpm'],
-                'timestamp': data['timestamp']
-                
-                # 'engine_rpm': data['engine_rpm'],
-                # 'vehicle_speed': data['vehicle_speed'],
-                # 'coolant_temp': data['coolant_temp'],
-                # 'fuel_status': data['fuel_status'],
-                # 'intake_air_temp': data['intake_air_temp'],
-                # 'mass_air_flow': data['mass_air_flow'],
-                # 'engine_load': data['engine_load'],
-                # 'fuel_rail_pressure': data['fuel_rail_pressure'],
-                # 'fuel_rail_gauge': data['fuel_rail_gauge'],
-                # 'fuel_level_input': data['fuel_level_input'],
-                # 'barometric_pressure': data['barometric_pressure'],
-                # 'distance_dtc': data['distance_dtc'],
-                # 'distance_mil': data['distance_mil'],
-                # 'trans_fluid_temp': data['trans_fluid_temp'],
-                # 'trans_gear_ratio': data['trans_gear_ratio'],
-                # 'wheel_speed': data['wheel_speed'],
-                # 'security_status': data['security_status']
-            })
+            obd_data_buffer.put(
+                {
+                    "speed": data["speed"],
+                    "rpm": data["rpm"],
+                    "timestamp": data["timestamp"],
+                    # 'engine_rpm': data['engine_rpm'],
+                    # 'vehicle_speed': data['vehicle_speed'],
+                    # 'coolant_temp': data['coolant_temp'],
+                    # 'fuel_status': data['fuel_status'],
+                    # 'intake_air_temp': data['intake_air_temp'],
+                    # 'mass_air_flow': data['mass_air_flow'],
+                    # 'engine_load': data['engine_load'],
+                    # 'fuel_rail_pressure': data['fuel_rail_pressure'],
+                    # 'fuel_rail_gauge': data['fuel_rail_gauge'],
+                    # 'fuel_level_input': data['fuel_level_input'],
+                    # 'barometric_pressure': data['barometric_pressure'],
+                    # 'distance_dtc': data['distance_dtc'],
+                    # 'distance_mil': data['distance_mil'],
+                    # 'trans_fluid_temp': data['trans_fluid_temp'],
+                    # 'trans_gear_ratio': data['trans_gear_ratio'],
+                    # 'wheel_speed': data['wheel_speed'],
+                    # 'security_status': data['security_status']
+                }
+            )
             return make_response("Data received", 200)
         return make_response("Missing required fields", 400)
     except Exception as e:
         logger.error(f"Error processing OBD data: {str(e)}")
         return make_response("Error processing data", 400)
+
 
 @stream_viewer.route("/obd_stream_view")
 def obd_stream_view():
@@ -604,5 +607,5 @@ def obd_stream_view():
             except Queue.Empty:
                 pass
             time.sleep(0.1)
-    
+
     return Response(generate(), mimetype="text/event-stream")
