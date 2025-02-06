@@ -65,7 +65,8 @@ body_frame_buffer = []
 body_processing_thread = None
 face_frame_buffer = []
 face_processing_thread = None
-thread_kill = False
+body_thread_kill = False
+face_thread_kill = False
 
 # THIS BUFFER IS FOR VIEWING THE STREAM AND PREDICTIONS LIVE
 # small max length as we only want to show the most recent frames
@@ -201,12 +202,15 @@ def preprocess_frame_clip(frame, preprocess):
 # use cv2 haarcascade classifier to detect eyes
 # then use the binary_eyes_state_model to predict the state of each eye that was detected
 def process_stream_face(stream_url, sessionId):
-    global frame_count_face, face_batch_start, face_stream_data_buffer, face_frame_buffer
+    global frame_count_face, face_batch_start, face_stream_data_buffer, face_frame_buffer, face_thread_kill
     cap = cv2.VideoCapture(stream_url)
     currBufferSize = 0
     predictions_buffer = []
     prevEvent = {}
     while True:
+        if face_thread_kill:
+            return
+
         batch_frames = []
         batch_start_frame_count = frame_count_face
         while len(batch_frames) < BATCH_SIZE_EYES_STATE:
@@ -386,7 +390,7 @@ def process_stream_face(stream_url, sessionId):
 
 
 def process_stream_body(url, sessionId):
-    global frame_count_body, clip_model, clip_preprocess, clip_classifier, batch_start, body_stream_data_buffer, body_frame_buffer, thread_kill
+    global frame_count_body, clip_model, clip_preprocess, clip_classifier, batch_start, body_stream_data_buffer, body_frame_buffer, body_thread_kill
 
     if not all([clip_model, clip_preprocess, clip_classifier]):
         logger.error("CLIP components not initialized")
@@ -396,7 +400,7 @@ def process_stream_body(url, sessionId):
 
     while True:
         success, frame = cap.read()
-        if thread_kill:
+        if body_thread_kill:
             return
 
         if not success:
@@ -481,10 +485,12 @@ def face_stream_start():
 
 @stream_viewer.route("/face_stream_stop")
 def face_stream_stop():
-    global face_processing_thread
+    global face_processing_thread, face_thread_kill
 
     if face_processing_thread:
+        face_thread_kill = True
         face_processing_thread.join()
+        face_thread_kill = False
         face_processing_thread = None
         return make_response(f"Processing stopped", 200)
     return make_response(f"No processing thread to stop", 200)
@@ -521,12 +527,12 @@ def body_stream_clip_start():
 
 @stream_viewer.route("/body_stream_clip_stop")
 def body_stream_clip_stop():
-    global body_processing_thread, thread_kill
+    global body_processing_thread, body_thread_kill
 
     if body_processing_thread:
-        thread_kill = True
+        body_thread_kill = True
         body_processing_thread.join()
-        thread_kill = False
+        body_thread_kill = False
         body_processing_thread = None
         return make_response(f"Processing stopped", 200)
     return make_response(f"No processing thread to stop", 200)
