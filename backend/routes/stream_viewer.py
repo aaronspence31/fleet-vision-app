@@ -29,6 +29,7 @@ logger = logging.getLogger(__name__)
 obd_data_buffer = Queue(maxsize=100)  # Buffer for OBD data
 
 # Constants
+# If your FACE_STREAM_URL and BODY_STREAM_URL are the same, you will get errors!
 # FACE_STREAM_URL = "http://172.20.10.8/stream"  # ai thinker hotspot aaron
 FACE_STREAM_URL = "http://192.168.0.108/stream"  # ai thinker home wifi aaron
 # FACE_STREAM_URL = "http://172.20.10.4/stream"  # wrover hotspot aaron
