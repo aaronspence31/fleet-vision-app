@@ -10,6 +10,7 @@ import base64
 import logging
 import threading
 import numpy as np
+import queue
 from PIL import Image
 from queue import Queue
 from firestore import body_drive_sessions, face_drive_sessions
@@ -476,6 +477,9 @@ def process_stream_body(url, sessionId):
 def face_stream_start():
     global face_processing_thread
 
+    if face_processing_thread and face_processing_thread.is_alive():
+        return make_response("Face processing thread already running", 409)
+
     sessionId = uuid.uuid4()
     face_processing_thread = threading.Thread(
         target=process_stream_face,
@@ -508,7 +512,7 @@ def face_stream_view():
                 while not face_stream_data_buffer.empty():
                     frame = face_stream_data_buffer.get_nowait()
                     yield f"data: {json.dumps(frame)}\n\n"
-            except Queue.Empty:
+            except queue.Empty:
                 pass
             time.sleep(0.1)  # Prevent CPU thrashing
 
@@ -518,6 +522,9 @@ def face_stream_view():
 @stream_viewer.route("/body_stream_clip_start")
 def body_stream_clip_start():
     global body_processing_thread
+
+    if body_processing_thread and body_processing_thread.is_alive():
+        return make_response("Body processing thread already running", 409)
 
     sessionId = uuid.uuid4()
     body_processing_thread = threading.Thread(
@@ -550,7 +557,7 @@ def body_stream_clip_view():
                 while not body_stream_data_buffer.empty():
                     frame = body_stream_data_buffer.get_nowait()
                     yield f"data: {json.dumps(frame)}\n\n"
-            except Queue.Empty:
+            except queue.Empty:
                 pass
             time.sleep(0.1)  # Prevent CPU thrashing
 
@@ -604,7 +611,7 @@ def obd_stream_view():
                 while not obd_data_buffer.empty():
                     data = obd_data_buffer.get_nowait()
                     yield f"data: {json.dumps(data)}\n\n"
-            except Queue.Empty:
+            except queue.Empty:
                 pass
             time.sleep(0.1)
 
