@@ -31,11 +31,9 @@ obd_data_buffer = Queue(maxsize=100)  # Buffer for OBD data
 # Constants
 # If your FACE_STREAM_URL and BODY_STREAM_URL are the same, you will get errors!
 # FACE_STREAM_URL = "http://172.20.10.8/stream"  # ai thinker hotspot aaron
-FACE_STREAM_URL = "http://192.168.0.108/stream"  # ai thinker home wifi aaron
-# FACE_STREAM_URL = "http://172.20.10.4/stream"  # wrover hotspot aaron
+FACE_STREAM_URL = "http://192.168.0.113/stream"  # wrover home wifi aaron
 # BODY_STREAM_URL = "http://172.20.10.3/stream"  # ai thinker hotspot aaron
-BODY_STREAM_URL = "http://192.168.0.108/stream"  # ai thinker home wifi aaron
-# BODY_STREAM_URL = "http://172.20.10.5/stream"  # wrover hotspot aaron
+BODY_STREAM_URL = "http://192.168.0.112/stream"  # ai thinker home wifi aaron
 BATCH_SIZE_EYES_STATE = 1
 EYES_STATE_STREAM_PROCESS_INTERVAL = 5
 # WE SHOULD RECONSIDER HOW WE DO THESE EVENTS NOW THAT WE ARENT REALLY BATCHING
@@ -202,6 +200,7 @@ def preprocess_frame_clip(frame, preprocess):
 
 # TODO: this needs to be updated to get rid of any batching and events as these are causing issues
 # TODO: this also needs to be updated to use the binary eyes state model correctly if possible with this model
+# TODO: make sure frontend code is ready to handle unknown predictions too
 # process the face stream
 # use cv2 haarcascade classifier to detect eyes
 # then use the binary_eyes_state_model to predict the state of each eye that was detected
@@ -393,6 +392,8 @@ def process_stream_face(stream_url, sessionId):
             # )
 
 
+# TODO: update this function to use OpenCV to look for a human in the frame. Return Unknown if we cannot see a human.
+# Frontend code will need to be updated to accept Unknown as a prediction.
 def process_stream_body(url, sessionId):
     global frame_count_body, clip_model, clip_preprocess, clip_classifier, batch_start, body_stream_data_buffer, body_frame_buffer, body_thread_kill
 
@@ -494,13 +495,27 @@ def face_stream_start():
 def face_stream_stop():
     global face_processing_thread, face_thread_kill
 
-    if face_processing_thread:
+    try:
+        if not face_processing_thread:
+            return make_response("No processing thread running", 200)
+
+        if not face_processing_thread.is_alive():
+            face_processing_thread = None
+            return make_response("Thread already stopped", 200)
+
         face_thread_kill = True
-        face_processing_thread.join()
+        face_processing_thread.join(timeout=5.0)
+
+        if face_processing_thread.is_alive():
+            return make_response("Failed to stop thread within timeout", 500)
+
         face_thread_kill = False
         face_processing_thread = None
-        return make_response(f"Processing stopped", 200)
-    return make_response(f"No processing thread to stop", 200)
+        return make_response("Face processing stopped successfully", 200)
+
+    except Exception as e:
+        logger.error(f"Error stopping face processing thread: {str(e)}")
+        return make_response(f"Error stopping thread: {str(e)}", 500)
 
 
 @stream_viewer.route("/face_stream_view")
@@ -539,13 +554,27 @@ def body_stream_clip_start():
 def body_stream_clip_stop():
     global body_processing_thread, body_thread_kill
 
-    if body_processing_thread:
+    try:
+        if not body_processing_thread:
+            return make_response("No processing thread running", 200)
+
+        if not body_processing_thread.is_alive():
+            body_processing_thread = None
+            return make_response("Thread already stopped", 200)
+
         body_thread_kill = True
-        body_processing_thread.join()
+        body_processing_thread.join(timeout=5.0)  # Add timeout to prevent hanging
+
+        if body_processing_thread.is_alive():
+            return make_response("Failed to stop thread within timeout", 500)
+
         body_thread_kill = False
         body_processing_thread = None
-        return make_response(f"Processing stopped", 200)
-    return make_response(f"No processing thread to stop", 200)
+        return make_response("Processing stopped successfully", 200)
+
+    except Exception as e:
+        logger.error(f"Error stopping body processing thread: {str(e)}")
+        return make_response(f"Error stopping thread: {str(e)}", 500)
 
 
 @stream_viewer.route("/body_stream_clip_view")
