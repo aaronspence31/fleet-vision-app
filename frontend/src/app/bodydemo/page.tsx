@@ -25,6 +25,7 @@ export default function BodyDemo() {
         value: data.prediction,
         probability: parseFloat(data.probability),
         frameNum: parseInt(data.frame_number),
+        timestamp: parseInt(data.timestamp),
         camera: "Body",
       });
     };
@@ -70,6 +71,10 @@ export default function BodyDemo() {
             <Box key={index} className={styles.liveClasBox}>
               <Typography textAlign="center" width={150}>
                 {`Frame #${prediction.frameNum}`}
+              </Typography>
+              <Divider orientation="vertical" flexItem />
+              <Typography textAlign="center" width={150}>
+                {`Timestamp ${prediction.timestamp}`}
               </Typography>
               <Divider orientation="vertical" flexItem />
               <Typography textAlign="center" width={150}>

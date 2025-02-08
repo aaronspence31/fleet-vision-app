@@ -233,14 +233,6 @@ def process_stream_face(url, sessionId):
                     time.time() - prediction_start_time
                 ) * 1000  # Convert to milliseconds
 
-                # Firestore
-                if len(face_frame_buffer_db) == 0:
-                    face_batch_start = int(time.time())
-                if len(face_frame_buffer_db) < NUM_FRAMES_BEFORE_STORE_IN_DB:
-                    face_frame_buffer_db.append(prediction_label)
-                if len(face_frame_buffer_db) >= NUM_FRAMES_BEFORE_STORE_IN_DB:
-                    save_face_frames_to_firestore(sessionId)
-
                 logger.info(
                     f"FACE_STREAM: Frame {frame_count_face}: Processing time={prediction_time:.2f}ms, Prediction={prediction_label}, Probability={prob_score}"
                 )
@@ -248,6 +240,14 @@ def process_stream_face(url, sessionId):
                 logger.error(f"FACE_STREAM: Error in inference: {str(e)}")
                 prediction_label = "Unknown"
                 prob_score = None
+
+            # Firestore DB saving
+            if len(face_frame_buffer_db) == 0:
+                face_batch_start = int(time.time())
+            if len(face_frame_buffer_db) < NUM_FRAMES_BEFORE_STORE_IN_DB:
+                face_frame_buffer_db.append(prediction_label)
+            if len(face_frame_buffer_db) >= NUM_FRAMES_BEFORE_STORE_IN_DB:
+                save_face_frames_to_firestore(sessionId)
 
             # Encode frame for streaming
             _, buffer = cv2.imencode(".jpg", frame)
@@ -262,6 +262,7 @@ def process_stream_face(url, sessionId):
                     "prediction": prediction_label,
                     "probability": prob_score,
                     "frame_number": frame_count_face,
+                    "timestamp": int(time.time()),
                 }
             )
 
@@ -309,14 +310,6 @@ def process_stream_body(url, sessionId):
                     time.time() - prediction_start_time
                 ) * 1000  # Convert to milliseconds
 
-                # Firestore
-                if len(body_frame_buffer_db) == 0:
-                    body_batch_start = int(time.time())
-                if len(body_frame_buffer_db) < NUM_FRAMES_BEFORE_STORE_IN_DB:
-                    body_frame_buffer_db.append(prediction_label)
-                if len(body_frame_buffer_db) >= NUM_FRAMES_BEFORE_STORE_IN_DB:
-                    save_body_frames_to_firestore(sessionId)
-
                 logger.info(
                     f"BODY_STREAM: Frame {frame_count_body}: Processing time={prediction_time:.2f}ms, Prediction={prediction_label}, Probability={prob_score}"
                 )
@@ -324,6 +317,14 @@ def process_stream_body(url, sessionId):
                 logger.error(f"BODY_STREAM: Error in inference: {str(e)}")
                 prediction_label = "Unknown"
                 prob_score = None
+
+            # Firestore DB save
+            if len(body_frame_buffer_db) == 0:
+                body_batch_start = int(time.time())
+            if len(body_frame_buffer_db) < NUM_FRAMES_BEFORE_STORE_IN_DB:
+                body_frame_buffer_db.append(prediction_label)
+            if len(body_frame_buffer_db) >= NUM_FRAMES_BEFORE_STORE_IN_DB:
+                save_body_frames_to_firestore(sessionId)
 
             # Encode frame for streaming
             _, buffer = cv2.imencode(".jpg", frame)
@@ -338,6 +339,7 @@ def process_stream_body(url, sessionId):
                     "prediction": prediction_label,
                     "probability": prob_score,
                     "frame_number": frame_count_body,
+                    "timestamp": int(time.time()),
                 }
             )
 

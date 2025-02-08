@@ -3,12 +3,14 @@ export interface ServerResponse {
     prediction: string;
     probability: string;
     frame_number: string;
+    timestamp: string;
 }
   
 export interface LiveFrame {
     value: string;
     probability: number;
     frameNum: number;
+    timestamp: number;
     camera: 'Face' | 'Body';
 }
 
