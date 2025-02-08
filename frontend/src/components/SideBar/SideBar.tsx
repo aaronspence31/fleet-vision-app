@@ -81,22 +81,22 @@ const SideBar = () => {
             className={anonymous.className}
             sx={{ typography: { xl: "h5", lg: "h6" } }}
           >
-            Body Stream
+            Body Stream Demo
           </Typography>
         </Box>
         <Box
           className={[
             styles.iconContainer,
-            pathName == "/demo" && styles.selectedPage,
+            pathName == "/facedemo" && styles.selectedPage,
           ].join(" ")}
-          onClick={() => router.push("/demo")}
+          onClick={() => router.push("/facedemo")}
         >
           <Face className={styles.icon} />
           <Typography
             className={anonymous.className}
             sx={{ typography: { xl: "h5", lg: "h6" } }}
           >
-            Face Stream
+            Face Stream Demo
           </Typography>
         </Box>
       </Box>
