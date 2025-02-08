@@ -40,15 +40,12 @@ CLIP_MODEL_PATH_BODY = "dmd29_vitbl14-hypc_429_1000_ft.pkl"
 CLIP_MODEL_PATH_FACE = "sam-dd-front_vitbl14-hypc_429_1000_ft.pkl"
 
 # Setup cv2 classifiers to detect a person in the frame
-# Use for face stream
 faceCascade = cv2.CascadeClassifier(
     cv2.data.haarcascades + "haarcascade_frontalface_default.xml"
 )
-# Use for body stream
 profileFaceCascade = cv2.CascadeClassifier(
     cv2.data.haarcascades + "haarcascade_profileface.xml"
 )
-# Use for face and body streams as a backup in case no face detected
 upperBodyCascade = cv2.CascadeClassifier(
     cv2.data.haarcascades + "haarcascade_upperbody.xml"
 )
@@ -190,6 +187,76 @@ def preprocess_frame_clip(frame, preprocess):
     return processed.unsqueeze(0)
 
 
+# TODO: Determine if we actually want to use this function
+# Detect a person in frame so we return unknown if there is no person detected
+# This needs to be extremely fast as it will be called every frame
+def detect_person_in_frame(frame, isFaceStream, scale_factor=1.2, min_neighbors=1):
+    start_time = time.time()
+    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+
+    if isFaceStream:
+        # Face stream order: frontal face -> upper body -> profile face
+        faces = faceCascade.detectMultiScale(
+            gray, scaleFactor=scale_factor, minNeighbors=min_neighbors
+        )
+        if len(faces) > 0:
+            detection_time = (time.time() - start_time) * 1000
+            logger.info(
+                f"FACE_STREAM: Person detection completed in {detection_time:.2f}ms (frontal face detected)"
+            )
+            return True
+
+        upper_bodies = upperBodyCascade.detectMultiScale(
+            gray, scaleFactor=scale_factor, minNeighbors=min_neighbors
+        )
+        if len(upper_bodies) > 0:
+            detection_time = (time.time() - start_time) * 1000
+            logger.info(
+                f"FACE_STREAM: Person detection completed in {detection_time:.2f}ms (upper body detected)"
+            )
+            return True
+
+        profile_faces = profileFaceCascade.detectMultiScale(
+            gray, scaleFactor=scale_factor, minNeighbors=min_neighbors
+        )
+        detection_time = (time.time() - start_time) * 1000
+        logger.info(
+            f"FACE_STREAM: Person detection completed in {detection_time:.2f}ms (Person {'detected' if len(profile_faces) > 0 else 'not detected'})"
+        )
+        return len(profile_faces) > 0
+
+    else:
+        # Body stream order: profile face -> upper body -> frontal face
+        profile_faces = profileFaceCascade.detectMultiScale(
+            gray, scaleFactor=scale_factor, minNeighbors=min_neighbors
+        )
+        if len(profile_faces) > 0:
+            detection_time = (time.time() - start_time) * 1000
+            logger.info(
+                f"BODY_STREAM: Person detection completed in {detection_time:.2f}ms (profile face detected)"
+            )
+            return True
+
+        upper_bodies = upperBodyCascade.detectMultiScale(
+            gray, scaleFactor=scale_factor, minNeighbors=min_neighbors
+        )
+        if len(upper_bodies) > 0:
+            detection_time = (time.time() - start_time) * 1000
+            logger.info(
+                f"BODY_STREAM: Person detection completed in {detection_time:.2f}ms (upper body detected)"
+            )
+            return True
+
+        faces = faceCascade.detectMultiScale(
+            gray, scaleFactor=scale_factor, minNeighbors=min_neighbors
+        )
+        detection_time = (time.time() - start_time) * 1000
+        logger.info(
+            f"BODY_STREAM: Person detection completed in {detection_time:.2f}ms (Person {'detected' if len(faces) > 0 else 'not detected'})"
+        )
+        return len(faces) > 0
+
+
 def process_stream_face(url, sessionId):
     global frame_count_face, clip_model, clip_preprocess, clip_classifier_face, face_batch_start, face_stream_data_buffer, face_frame_buffer_db, face_thread_kill
 
@@ -212,34 +279,45 @@ def process_stream_face(url, sessionId):
         frame_count_face += 1
         prediction = None
         prob_score = None
-        prediction_label = ""  # Initialize at start of loop
+        prediction_label = "Unknown"  # Default to Unknown
 
         if frame_count_face % CLIP_PROCESS_INTERVAL == 0:
-            try:
-                prediction_start_time = time.time()
-                with torch.no_grad():
-                    processed = preprocess_frame_clip(frame, clip_preprocess).to(device)
-                    features = clip_model.encode_image(processed)
-                    features = features.cpu().numpy()
+            # TODO: verify if we want this present and if it works
+            # Its here so that we output Unknown if there is no person in the frame
+            # The models will still confidently make a prediction, so I don't want to let it get there
+            person_detected = detect_person_in_frame(frame, True)
 
-                    prediction = int(clip_classifier_face.predict(features)[0])
-                    prob_score = clip_classifier_face.predict_proba(features)[0][
-                        prediction
-                    ]
-                    prediction_label = face_stream_index_to_label.get(
-                        prediction, "Unknown"
+            if person_detected:
+                try:
+                    prediction_start_time = time.time()
+                    with torch.no_grad():
+                        processed = preprocess_frame_clip(frame, clip_preprocess).to(
+                            device
+                        )
+                        features = clip_model.encode_image(processed)
+                        features = features.cpu().numpy()
+
+                        prediction = int(clip_classifier_face.predict(features)[0])
+                        prob_score = clip_classifier_face.predict_proba(features)[0][
+                            prediction
+                        ]
+                        prediction_label = face_stream_index_to_label.get(
+                            prediction, "Unknown"
+                        )
+
+                    prediction_time = (time.time() - prediction_start_time) * 1000
+                    logger.info(
+                        f"FACE_STREAM: Frame {frame_count_face}: Processing time={prediction_time:.2f}ms, Prediction={prediction_label}, Probability={prob_score}"
                     )
-                prediction_time = (
-                    time.time() - prediction_start_time
-                ) * 1000  # Convert to milliseconds
 
+                except Exception as e:
+                    logger.error(f"FACE_STREAM: Error in inference: {str(e)}")
+                    prediction_label = "Unknown"
+                    prob_score = None
+            else:
                 logger.info(
-                    f"FACE_STREAM: Frame {frame_count_face}: Processing time={prediction_time:.2f}ms, Prediction={prediction_label}, Probability={prob_score}"
+                    f"FACE_STREAM: Frame {frame_count_face}: No person detected, prediction set to Unknown"
                 )
-            except Exception as e:
-                logger.error(f"FACE_STREAM: Error in inference: {str(e)}")
-                prediction_label = "Unknown"
-                prob_score = None
 
             # Firestore DB saving
             if len(face_frame_buffer_db) == 0:
@@ -253,7 +331,6 @@ def process_stream_face(url, sessionId):
             _, buffer = cv2.imencode(".jpg", frame)
             frame_base64 = base64.b64encode(buffer).decode("utf-8")
 
-            # Instead of yielding, we now add to a queue that can be read from to view the stream live
             if face_stream_data_buffer.full():
                 face_stream_data_buffer.get_nowait()
             face_stream_data_buffer.put(
@@ -292,31 +369,42 @@ def process_stream_body(url, sessionId):
         prediction_label = "Unknown"  # Initialize at start of loop
 
         if frame_count_body % CLIP_PROCESS_INTERVAL == 0:
-            try:
-                prediction_start_time = time.time()
-                with torch.no_grad():
-                    processed = preprocess_frame_clip(frame, clip_preprocess).to(device)
-                    features = clip_model.encode_image(processed)
-                    features = features.cpu().numpy()
+            # TODO: verify if we want this present and if it works
+            # Its here so that we output Unknown if there is no person in the frame
+            # The models will still confidently make a prediction, so I don't want to let it get there
+            person_detected = detect_person_in_frame(frame, False)
 
-                    prediction = int(clip_classifier_body.predict(features)[0])
-                    prob_score = clip_classifier_body.predict_proba(features)[0][
-                        prediction
-                    ]
-                    prediction_label = body_stream_index_to_label.get(
-                        prediction, "Unknown"
+            if person_detected:
+                try:
+                    prediction_start_time = time.time()
+                    with torch.no_grad():
+                        processed = preprocess_frame_clip(frame, clip_preprocess).to(
+                            device
+                        )
+                        features = clip_model.encode_image(processed)
+                        features = features.cpu().numpy()
+
+                        prediction = int(clip_classifier_body.predict(features)[0])
+                        prob_score = clip_classifier_body.predict_proba(features)[0][
+                            prediction
+                        ]
+                        prediction_label = body_stream_index_to_label.get(
+                            prediction, "Unknown"
+                        )
+
+                    prediction_time = (time.time() - prediction_start_time) * 1000
+                    logger.info(
+                        f"BODY_STREAM: Frame {frame_count_body}: Processing time={prediction_time:.2f}ms, Prediction={prediction_label}, Probability={prob_score}"
                     )
-                prediction_time = (
-                    time.time() - prediction_start_time
-                ) * 1000  # Convert to milliseconds
 
+                except Exception as e:
+                    logger.error(f"BODY_STREAM: Error in inference: {str(e)}")
+                    prediction_label = "Unknown"
+                    prob_score = None
+            else:
                 logger.info(
-                    f"BODY_STREAM: Frame {frame_count_body}: Processing time={prediction_time:.2f}ms, Prediction={prediction_label}, Probability={prob_score}"
+                    f"BODY_STREAM: Frame {frame_count_body}: No person detected, prediction set to Unknown"
                 )
-            except Exception as e:
-                logger.error(f"BODY_STREAM: Error in inference: {str(e)}")
-                prediction_label = "Unknown"
-                prob_score = None
 
             # Firestore DB save
             if len(body_frame_buffer_db) == 0:
@@ -330,7 +418,6 @@ def process_stream_body(url, sessionId):
             _, buffer = cv2.imencode(".jpg", frame)
             frame_base64 = base64.b64encode(buffer).decode("utf-8")
 
-            # Instead of yielding, we now add to a queue that can be read from to view the stream live
             if body_stream_data_buffer.full():
                 body_stream_data_buffer.get_nowait()
             body_stream_data_buffer.put(
