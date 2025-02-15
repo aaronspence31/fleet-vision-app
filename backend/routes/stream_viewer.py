@@ -28,14 +28,13 @@ obd_data_buffer = Queue(maxsize=100)
 
 # Constants
 # If your FACE_STREAM_URL and BODY_STREAM_URL are the same, you will get errors!
-# FACE_STREAM_URL = "http://172.20.10.8/stream"  # ai thinker hotspot aaron
+# FACE_STREAM_URL = "http://172.20.10.3/stream"  # ai thinker hotspot aaron
 FACE_STREAM_URL = "http://192.168.0.111/stream"  # wrover home wifi aaron
-# BODY_STREAM_URL = "http://172.20.10.3/stream"  # ai thinker hotspot aaron
+# BODY_STREAM_URL = "http://172.20.10.8/stream"  # ai thinker hotspot aaron
 BODY_STREAM_URL = "http://192.168.0.112/stream"  # ai thinker home wifi aaron
 # Clip constants
 CLIP_MODEL_NAME = "ViT-L/14"
 CLIP_INPUT_SIZE = 224
-CLIP_PROCESS_INTERVAL = 1  # Process every nth frame, drop the rest
 CLIP_MODEL_PATH_BODY = "dmd29_vitbl14-hypc_429_1000_ft.pkl"
 CLIP_MODEL_PATH_FACE = "sam-dd-front_vitbl14-hypc_429_1000_ft.pkl"
 
@@ -187,7 +186,6 @@ def preprocess_frame_clip(frame, preprocess):
     return processed.unsqueeze(0)
 
 
-# TODO: Determine if we actually want to use this function
 # Detect a person in frame so we return unknown if there is no person detected
 # This needs to be extremely fast as it will be called every frame
 def detect_person_in_frame(frame, isFaceStream, scale_factor=1.2, min_neighbors=1):
@@ -281,67 +279,62 @@ def process_stream_face(url, sessionId):
         prob_score = None
         prediction_label = "Unknown"  # Default to Unknown
 
-        if frame_count_face % CLIP_PROCESS_INTERVAL == 0:
-            # TODO: verify if we want this present and if it works
-            # Its here so that we output Unknown if there is no person in the frame
-            # The models will still confidently make a prediction, so I don't want to let it get there
-            person_detected = detect_person_in_frame(frame, True)
+        # person_detected = detect_person_in_frame(frame, True)
+        person_detected = True  # Not using person detection for now
 
-            if person_detected:
-                try:
-                    prediction_start_time = time.time()
-                    with torch.no_grad():
-                        processed = preprocess_frame_clip(frame, clip_preprocess).to(
-                            device
-                        )
-                        features = clip_model.encode_image(processed)
-                        features = features.cpu().numpy()
+        if person_detected:
+            try:
+                prediction_start_time = time.time()
+                with torch.no_grad():
+                    processed = preprocess_frame_clip(frame, clip_preprocess).to(device)
+                    features = clip_model.encode_image(processed)
+                    features = features.cpu().numpy()
 
-                        prediction = int(clip_classifier_face.predict(features)[0])
-                        prob_score = clip_classifier_face.predict_proba(features)[0][
-                            prediction
-                        ]
-                        prediction_label = face_stream_index_to_label.get(
-                            prediction, "Unknown"
-                        )
-
-                    prediction_time = (time.time() - prediction_start_time) * 1000
-                    logger.info(
-                        f"FACE_STREAM: Frame {frame_count_face}: Processing time={prediction_time:.2f}ms, Prediction={prediction_label}, Probability={prob_score}"
+                    prediction = int(clip_classifier_face.predict(features)[0])
+                    prob_score = clip_classifier_face.predict_proba(features)[0][
+                        prediction
+                    ]
+                    prediction_label = face_stream_index_to_label.get(
+                        prediction, "Unknown"
                     )
 
-                except Exception as e:
-                    logger.error(f"FACE_STREAM: Error in inference: {str(e)}")
-                    prediction_label = "Unknown"
-                    prob_score = None
-            else:
+                prediction_time = (time.time() - prediction_start_time) * 1000
                 logger.info(
-                    f"FACE_STREAM: Frame {frame_count_face}: No person detected, prediction set to Unknown"
+                    f"FACE_STREAM: Frame {frame_count_face}: Processing time={prediction_time:.2f}ms, Prediction={prediction_label}, Probability={prob_score}"
                 )
 
-            # Firestore DB saving
-            if len(face_frame_buffer_db) == 0:
-                face_batch_start = int(time.time())
-            if len(face_frame_buffer_db) < NUM_FRAMES_BEFORE_STORE_IN_DB:
-                face_frame_buffer_db.append(prediction_label)
-            if len(face_frame_buffer_db) >= NUM_FRAMES_BEFORE_STORE_IN_DB:
-                save_face_frames_to_firestore(sessionId)
-
-            # Encode frame for streaming
-            _, buffer = cv2.imencode(".jpg", frame)
-            frame_base64 = base64.b64encode(buffer).decode("utf-8")
-
-            if face_stream_data_buffer.full():
-                face_stream_data_buffer.get_nowait()
-            face_stream_data_buffer.put(
-                {
-                    "image": frame_base64,
-                    "prediction": prediction_label,
-                    "probability": prob_score,
-                    "frame_number": frame_count_face,
-                    "timestamp": int(time.time()),
-                }
+            except Exception as e:
+                logger.error(f"FACE_STREAM: Error in inference: {str(e)}")
+                prediction_label = "Unknown"
+                prob_score = None
+        else:
+            logger.info(
+                f"FACE_STREAM: Frame {frame_count_face}: No person detected, prediction set to Unknown"
             )
+
+        # Firestore DB saving
+        if len(face_frame_buffer_db) == 0:
+            face_batch_start = int(time.time())
+        if len(face_frame_buffer_db) < NUM_FRAMES_BEFORE_STORE_IN_DB:
+            face_frame_buffer_db.append(prediction_label)
+        if len(face_frame_buffer_db) >= NUM_FRAMES_BEFORE_STORE_IN_DB:
+            save_face_frames_to_firestore(sessionId)
+
+        # Encode frame for streaming
+        _, buffer = cv2.imencode(".jpg", frame)
+        frame_base64 = base64.b64encode(buffer).decode("utf-8")
+
+        if face_stream_data_buffer.full():
+            face_stream_data_buffer.get_nowait()
+        face_stream_data_buffer.put(
+            {
+                "image": frame_base64,
+                "prediction": prediction_label,
+                "probability": prob_score,
+                "frame_number": frame_count_face,
+                "timestamp": int(time.time()),
+            }
+        )
 
 
 def process_stream_body(url, sessionId):
@@ -368,67 +361,62 @@ def process_stream_body(url, sessionId):
         prob_score = None
         prediction_label = "Unknown"  # Initialize at start of loop
 
-        if frame_count_body % CLIP_PROCESS_INTERVAL == 0:
-            # TODO: verify if we want this present and if it works
-            # Its here so that we output Unknown if there is no person in the frame
-            # The models will still confidently make a prediction, so I don't want to let it get there
-            person_detected = detect_person_in_frame(frame, False)
+        # person_detected = detect_person_in_frame(frame, False)
+        person_detected = True  # Not using person detection for now
 
-            if person_detected:
-                try:
-                    prediction_start_time = time.time()
-                    with torch.no_grad():
-                        processed = preprocess_frame_clip(frame, clip_preprocess).to(
-                            device
-                        )
-                        features = clip_model.encode_image(processed)
-                        features = features.cpu().numpy()
+        if person_detected:
+            try:
+                prediction_start_time = time.time()
+                with torch.no_grad():
+                    processed = preprocess_frame_clip(frame, clip_preprocess).to(device)
+                    features = clip_model.encode_image(processed)
+                    features = features.cpu().numpy()
 
-                        prediction = int(clip_classifier_body.predict(features)[0])
-                        prob_score = clip_classifier_body.predict_proba(features)[0][
-                            prediction
-                        ]
-                        prediction_label = body_stream_index_to_label.get(
-                            prediction, "Unknown"
-                        )
-
-                    prediction_time = (time.time() - prediction_start_time) * 1000
-                    logger.info(
-                        f"BODY_STREAM: Frame {frame_count_body}: Processing time={prediction_time:.2f}ms, Prediction={prediction_label}, Probability={prob_score}"
+                    prediction = int(clip_classifier_body.predict(features)[0])
+                    prob_score = clip_classifier_body.predict_proba(features)[0][
+                        prediction
+                    ]
+                    prediction_label = body_stream_index_to_label.get(
+                        prediction, "Unknown"
                     )
 
-                except Exception as e:
-                    logger.error(f"BODY_STREAM: Error in inference: {str(e)}")
-                    prediction_label = "Unknown"
-                    prob_score = None
-            else:
+                prediction_time = (time.time() - prediction_start_time) * 1000
                 logger.info(
-                    f"BODY_STREAM: Frame {frame_count_body}: No person detected, prediction set to Unknown"
+                    f"BODY_STREAM: Frame {frame_count_body}: Processing time={prediction_time:.2f}ms, Prediction={prediction_label}, Probability={prob_score}"
                 )
 
-            # Firestore DB save
-            if len(body_frame_buffer_db) == 0:
-                body_batch_start = int(time.time())
-            if len(body_frame_buffer_db) < NUM_FRAMES_BEFORE_STORE_IN_DB:
-                body_frame_buffer_db.append(prediction_label)
-            if len(body_frame_buffer_db) >= NUM_FRAMES_BEFORE_STORE_IN_DB:
-                save_body_frames_to_firestore(sessionId)
-
-            # Encode frame for streaming
-            _, buffer = cv2.imencode(".jpg", frame)
-            frame_base64 = base64.b64encode(buffer).decode("utf-8")
-
-            if body_stream_data_buffer.full():
-                body_stream_data_buffer.get_nowait()
-            body_stream_data_buffer.put(
-                {
-                    "image": frame_base64,
-                    "prediction": prediction_label,
-                    "probability": prob_score,
-                    "frame_number": frame_count_body,
-                    "timestamp": int(time.time()),
-                }
+            except Exception as e:
+                logger.error(f"BODY_STREAM: Error in inference: {str(e)}")
+                prediction_label = "Unknown"
+                prob_score = None
+        else:
+            logger.info(
+                f"BODY_STREAM: Frame {frame_count_body}: No person detected, prediction set to Unknown"
             )
+
+        # Firestore DB save
+        if len(body_frame_buffer_db) == 0:
+            body_batch_start = int(time.time())
+        if len(body_frame_buffer_db) < NUM_FRAMES_BEFORE_STORE_IN_DB:
+            body_frame_buffer_db.append(prediction_label)
+        if len(body_frame_buffer_db) >= NUM_FRAMES_BEFORE_STORE_IN_DB:
+            save_body_frames_to_firestore(sessionId)
+
+        # Encode frame for streaming
+        _, buffer = cv2.imencode(".jpg", frame)
+        frame_base64 = base64.b64encode(buffer).decode("utf-8")
+
+        if body_stream_data_buffer.full():
+            body_stream_data_buffer.get_nowait()
+        body_stream_data_buffer.put(
+            {
+                "image": frame_base64,
+                "prediction": prediction_label,
+                "probability": prob_score,
+                "frame_number": frame_count_body,
+                "timestamp": int(time.time()),
+            }
+        )
 
 
 # PUT ALL ROUTES BELOW -----------------------------------------------------------------------
