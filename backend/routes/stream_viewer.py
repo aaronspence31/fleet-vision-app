@@ -29,9 +29,9 @@ obd_data_buffer = Queue(maxsize=100)
 # Constants
 # If your FACE_STREAM_URL and BODY_STREAM_URL are the same, you will get errors!
 # FACE_STREAM_URL = "http://172.20.10.3/stream"  # ai thinker hotspot aaron
-FACE_STREAM_URL = "http://192.168.0.111/stream"  # wrover home wifi aaron
+FACE_STREAM_URL = "http://192.168.0.104/stream"  # wrover home wifi aaron
 # BODY_STREAM_URL = "http://172.20.10.8/stream"  # ai thinker hotspot aaron
-BODY_STREAM_URL = "http://192.168.0.112/stream"  # ai thinker home wifi aaron
+BODY_STREAM_URL = "http://192.168.0.105/stream"  # ai thinker home wifi aaron
 # Clip constants
 CLIP_MODEL_NAME = "ViT-L/14"
 CLIP_INPUT_SIZE = 224
@@ -75,6 +75,7 @@ clip_preprocess = None
 clip_classifier_body = None
 clip_classifier_face = None
 device = "cuda" if torch.cuda.is_available() else "cpu"
+logger.info(f"Using device: {device}")
 
 # TODO: Frontend code should also handle Unknown as a prediction
 face_stream_index_to_label = {

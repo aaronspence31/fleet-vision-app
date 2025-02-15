@@ -11,6 +11,7 @@ requests==2.31.0
 Werkzeug==2.3.4
 numpy==1.26.4
 opencv-python==4.8.1.78
+--find-links https://download.pytorch.org/whl/cu118
 torch
 torchvision
 clip
