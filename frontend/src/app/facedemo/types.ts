@@ -1,15 +1,19 @@
 export interface ServerResponse {
     image: string;
-    prediction: string;
+    eye_prediction: string;
     ear_score: string;
+    mouth_prediction: string;
+    mar_score: string;
     frame_number: string;
     timestamp: string;
     processing_time: string;
 }
   
 export interface LiveFrame {
-    value: string;
+    eye_prediction: string;
+    mouth_prediction: string;
     ear_score: number;
+    mar_score: number;
     frameNum: number;
     timestamp: number;
     processing_time: number;

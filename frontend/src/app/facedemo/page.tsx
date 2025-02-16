@@ -22,8 +22,10 @@ export default function FaceDemo() {
       }
 
       addLivePrediction({
-        value: data.prediction,
+        eye_prediction: data.eye_prediction,
+        mouth_prediction: data.mouth_prediction,
         ear_score: parseFloat(data.ear_score),
+        mar_score: parseFloat(data.mar_score),
         frameNum: parseInt(data.frame_number),
         timestamp: parseInt(data.timestamp),
         processing_time: parseFloat(data.processing_time),
@@ -79,15 +81,23 @@ export default function FaceDemo() {
               </Typography>
               <Divider orientation="vertical" flexItem />
               <Typography textAlign="center" width={150}>
-                {prediction.processing_time.toFixed(2)}
+                {`Processing Time ${prediction.processing_time.toFixed(2)}`}
               </Typography>
               <Divider orientation="vertical" flexItem />
               <Typography textAlign="center" width={150}>
-                {prediction.value}
+                {`Eye Prediction: ${prediction.eye_prediction}`}
               </Typography>
               <Divider orientation="vertical" flexItem />
               <Typography textAlign="center" width={150}>
-                {`${(prediction.ear_score).toFixed(2)}`}
+                {`EAR Score: ${(prediction.ear_score).toFixed(2)}`}
+              </Typography>
+              <Divider orientation="vertical" flexItem />
+              <Typography textAlign="center" width={150}>
+                {`Mouth Prediction: ${prediction.mouth_prediction}`}
+              </Typography>
+              <Divider orientation="vertical" flexItem />
+              <Typography textAlign="center" width={150}>
+                {`MAR Score: ${(prediction.mar_score).toFixed(2)}`}
               </Typography>
             </Box>
           ))}

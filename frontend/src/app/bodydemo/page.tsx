@@ -79,15 +79,15 @@ export default function BodyDemo() {
               </Typography>
               <Divider orientation="vertical" flexItem />
               <Typography textAlign="center" width={150}>
-                {prediction.processing_time.toFixed(2)}
+              {`Processing Time ${prediction.processing_time.toFixed(2)}`}
               </Typography>
               <Divider orientation="vertical" flexItem />
               <Typography textAlign="center" width={150}>
-                {prediction.value}
+                {`Prediction: ${prediction.value}`}
               </Typography>
               <Divider orientation="vertical" flexItem />
               <Typography textAlign="center" width={150}>
-                {`${(prediction.probability * 100).toFixed(2)}%`}
+                {`Prediction Probability: ${(prediction.probability * 100).toFixed(2)}%`}
               </Typography>
             </Box>
           ))}

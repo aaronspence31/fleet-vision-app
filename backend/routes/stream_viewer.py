@@ -37,6 +37,9 @@ BODY_STREAM_URL = "http://192.168.0.108/stream"  # wrover home wifi aaron
 CLIP_MODEL_NAME = "ViT-L/14"
 CLIP_INPUT_SIZE = 224
 CLIP_MODEL_PATH_BODY = "dmd29_vitbl14-hypc_429_1000_ft.pkl"
+# Thresholds used for face stream
+EAR_THRESHOLD = 0.25
+MAR_THRESHOLD = 0.25
 
 # Setup cv2 classifiers to detect a person in the frame
 faceCascade = cv2.CascadeClassifier(
@@ -120,6 +123,7 @@ except Exception as e:
     raise
 
 
+# Face stream helper function
 def save_face_frames_to_firestore(sessionId):
     global face_batch_start, face_frame_buffer_db
 
@@ -148,6 +152,7 @@ def save_face_frames_to_firestore(sessionId):
         face_batch_start = None
 
 
+# Body stream helper function
 def save_body_frames_to_firestore(sessionId):
     global body_batch_start, body_frame_buffer_db
 
@@ -177,27 +182,28 @@ def save_body_frames_to_firestore(sessionId):
 
 
 # Face stream helper function to compute Eye Aspect Ratio (EAR)
+# Formula taken from https://pmc.ncbi.nlm.nih.gov/articles/PMC11398282/
 def compute_EAR(eye):
-    # Compute the Euclidean distances between the vertical eye landmarks
     A = np.linalg.norm(eye[1] - eye[5])
     B = np.linalg.norm(eye[2] - eye[4])
-    # Compute the distance between the horizontal eye landmarks
     C = np.linalg.norm(eye[0] - eye[3])
     ear = (A + B) / (2.0 * C)
     return ear
 
 
-def compute_EAR(eye):
-    # Compute the Euclidean distances between the vertical eye landmarks
-    A = np.linalg.norm(eye[1] - eye[5])
-    B = np.linalg.norm(eye[2] - eye[4])
-    # Compute the Euclidean distance between the horizontal eye landmarks
-    C = np.linalg.norm(eye[0] - eye[3])
-    ear = (A + B) / (2.0 * C)
-    return ear
+# Face stream helper function to compute Mouth Aspect Ratio (MAR)
+# Formula taken from https://pmc.ncbi.nlm.nih.gov/articles/PMC11398282/
+def compute_MAR(mouth):
+    A = np.linalg.norm(mouth[1] - mouth[7])
+    B = np.linalg.norm(mouth[2] - mouth[6])
+    C = np.linalg.norm(mouth[3] - mouth[4])
+    D = np.linalg.norm(mouth[0] - mouth[4])
+    mar = (A + B + C) / (2.0 * D)
+    return mar
 
 
-# Predictions are Eyes Open, Eyes Closed or Unknown
+# Eyes State Predictions are Eyes Open, Eyes Closed or Unknown
+# Mouth State Predictions are Mouth Open, Mouth Closed or Unknown
 # Used paper here https://pmc.ncbi.nlm.nih.gov/articles/PMC11398282/
 def process_stream_face(url, sessionId):
     global frame_count_face, face_stream_data_buffer, face_thread_kill
@@ -207,17 +213,18 @@ def process_stream_face(url, sessionId):
     cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
 
     while not face_thread_kill:
-        # Initialize timing variables for each frame
         pipeline_start_time = time.time()
+
+        # Initialize timing variables for each frame
         frame_capture_time = 0
         face_detect_time = 0
         dlib_time = 0
         ear_time = 0
-        vis_time = 0
+        mar_time = 0
         encoding_time = 0
         db_time = 0
 
-        # Time frame capture
+        # 1. Capture frame
         capture_start = time.time()
         success, frame = cap.read()
         frame_capture_time = (time.time() - capture_start) * 1000
@@ -229,138 +236,152 @@ def process_stream_face(url, sessionId):
 
         frame_count_face += 1
 
-        # Time face detection
+        # 2. Detect face
         face_detect_start = time.time()
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
         faces = faceCascade.detectMultiScale(gray, 1.3, 1)
         face_detect_time = (time.time() - face_detect_start) * 1000
 
         frame_with_boxes = frame.copy()
-        classification = "Unknown"
-        ear_score = None
 
+        # Default classifications if no face is found
+        eye_classification = "Unknown"
+        mouth_classification = "Unknown"
+        ear_score = None
+        mar_score = None
+
+        # Process the largest face if present
         if len(faces) > 0:
-            # Find largest face
+            # Find the largest face
             largest_face = max(faces, key=lambda face: face[2] * face[3])
             fx, fy, fw, fh = largest_face
             cv2.rectangle(
                 frame_with_boxes, (fx, fy), (fx + fw, fy + fh), (255, 0, 0), 2
             )
-            roi_color = frame_with_boxes[fy : fy + fh, fx : fx + fw]
 
-            # Time dlib feature extraction
+            # 3. Landmark detection with dlib
             dlib_start = time.time()
             dlib_rect = dlib.rectangle(int(fx), int(fy), int(fx + fw), int(fy + fh))
             shape = landmark_predictor(gray, dlib_rect)
             shape_np = face_utils.shape_to_np(shape)
             dlib_time = (time.time() - dlib_start) * 1000
 
-            # Time eye landmark extraction and EAR calculation
+            # 4. Eye Aspect Ratio (EAR)
             ear_start = time.time()
-            left_eye_pts = shape_np[36:42]
-            right_eye_pts = shape_np[42:48]
+            left_eye_pts = shape_np[36:42]  # 6 points for left eye
+            right_eye_pts = shape_np[42:48]  # 6 points for right eye
 
-            # Draw landmarks
+            # Draw eye landmarks (circles)
             for x, y in np.concatenate((left_eye_pts, right_eye_pts)):
                 cv2.circle(frame_with_boxes, (x, y), 1, (0, 0, 255), -1)
 
+            # Compute EAR
             left_ear = compute_EAR(left_eye_pts)
             right_ear = compute_EAR(right_eye_pts)
             avg_ear = (left_ear + right_ear) / 2.0
+            ear_score = avg_ear
+            eye_classification = (
+                "Eyes Open" if avg_ear > EAR_THRESHOLD else "Eyes Closed"
+            )
             ear_time = (time.time() - ear_start) * 1000
 
-            # Classification and visualization
-            vis_start = time.time()
-            if avg_ear > 0.25:
-                eye_state = "Open"
-            else:
-                eye_state = "Closed"
-            classification = f"Eyes {eye_state}"
-            ear_score = avg_ear
-
-            (lex, ley, lew, leh) = cv2.boundingRect(left_eye_pts)
-            (rex, rey, rew, reh) = cv2.boundingRect(right_eye_pts)
-            rel_lex, rel_ley = lex - fx, ley - fy
-            rel_rex, rel_rey = rex - fx, rey - fy
-
-            # Draw eye boxes and text
+            # Draw bounding box around both eyes and the classification text
+            eyes_pts = np.concatenate((left_eye_pts, right_eye_pts))
+            (ex, ey, ew, eh) = cv2.boundingRect(eyes_pts)
             cv2.rectangle(
-                roi_color,
-                (rel_lex, rel_ley),
-                (rel_lex + lew, rel_ley + leh),
-                (0, 255, 0),
-                2,
-            )
-            cv2.rectangle(
-                roi_color,
-                (rel_rex, rel_rey),
-                (rel_rex + rew, rel_rey + reh),
-                (0, 255, 0),
-                2,
+                frame_with_boxes, (ex, ey), (ex + ew, ey + eh), (0, 255, 0), 2
             )
             cv2.putText(
-                roi_color,
-                f"{eye_state}",
-                (rel_lex, rel_ley - 10),
+                frame_with_boxes,
+                eye_classification,
+                (ex, ey - 10),
                 cv2.FONT_HERSHEY_SIMPLEX,
                 0.6,
                 (0, 255, 0),
                 2,
             )
-            vis_time = (time.time() - vis_start) * 1000
 
-        # Time frame encoding
+            # 5. Mouth Aspect Ratio (MAR)
+            mar_start = time.time()
+            # We need 8 points for the new MAR formula.
+            # Use the inner mouth points
+            mouth_8_pts = shape_np[60:68]  # p1..p8
+            mar_score = compute_MAR(mouth_8_pts)
+            mouth_classification = (
+                "Mouth Open" if mar_score > MAR_THRESHOLD else "Mouth Closed"
+            )
+            mar_time = (time.time() - mar_start) * 1000
+
+            # Draw mouth landmarks (for visualization, show all outer mouth points [48..60])
+            outer_mouth_pts = shape_np[60:68]
+            for mx, my in outer_mouth_pts:
+                cv2.circle(frame_with_boxes, (mx, my), 1, (255, 0, 255), -1)
+            (mx, my, mw, mh) = cv2.boundingRect(outer_mouth_pts)
+            cv2.rectangle(
+                frame_with_boxes, (mx, my), (mx + mw, my + mh), (255, 255, 0), 2
+            )
+            cv2.putText(
+                frame_with_boxes,
+                f"{mouth_classification}",
+                (mx, my - 10),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.6,
+                (255, 255, 0),
+                2,
+            )
+
+        # 6. Encode the frame for streaming
         encode_start = time.time()
         _, buffer = cv2.imencode(".jpg", frame_with_boxes)
         frame_base64 = base64.b64encode(buffer).decode("utf-8")
         encoding_time = (time.time() - encode_start) * 1000
 
-        # Time database operations if needed
+        # 7. Database operations (batching logic)
         db_start = time.time()
         if len(face_frame_buffer_db) == 0:
             face_batch_start = int(time.time())
         if len(face_frame_buffer_db) < NUM_FRAMES_BEFORE_STORE_IN_DB:
-            face_frame_buffer_db.append(classification)
+            face_frame_buffer_db.append(f"{eye_classification}, {mouth_classification}")
         if len(face_frame_buffer_db) >= NUM_FRAMES_BEFORE_STORE_IN_DB:
             save_face_frames_to_firestore(sessionId)
         db_time = (time.time() - db_start) * 1000
-
-        # Calculate total pipeline time
         total_time = (time.time() - pipeline_start_time) * 1000
 
-        # Log comprehensive timing breakdown
+        # 8. Log timing breakdown and classification details
         timing_log = (
             f"FACE_STREAM: Frame {frame_count_face} complete pipeline breakdown:\n"
             f"  - Frame Capture: {frame_capture_time:.2f}ms\n"
             f"  - Face Detection: {face_detect_time:.2f}ms\n"
         )
-
         if len(faces) > 0:
+            fw, fh = largest_face[2], largest_face[3]
             timing_log += (
                 f"  - Dlib Landmarks: {dlib_time:.2f}ms\n"
                 f"  - EAR Calculation: {ear_time:.2f}ms\n"
-                f"  - Visualization: {vis_time:.2f}ms\n"
+                f"  - MAR Calculation: {mar_time:.2f}ms\n"
                 f"  - Face Size: {fw * fh} pixels\n"
                 f"  - EAR Score: {ear_score:.3f}\n"
+                f"  - MAR Score: {mar_score:.3f}\n"
+                f"  - Eye Classification: {eye_classification}\n"
+                f"  - Mouth Classification: {mouth_classification}\n"
             )
-
         timing_log += (
             f"  - Frame Encoding: {encoding_time:.2f}ms\n"
             f"  - Database Operations: {db_time:.2f}ms\n"
             f"  - Total Pipeline Time: {total_time:.2f}ms\n"
-            f"  - Classification: {classification}"
         )
-
         logger.info(timing_log)
 
-        # Stream output
+        # 9. Stream output
         if face_stream_data_buffer.full():
             face_stream_data_buffer.get_nowait()
         face_stream_data_buffer.put(
             {
                 "image": frame_base64,
-                "prediction": classification,
+                "eye_prediction": eye_classification,
                 "ear_score": ear_score,
+                "mouth_prediction": mouth_classification,
+                "mar_score": mar_score,
                 "frame_number": frame_count_face,
                 "timestamp": int(time.time()),
                 "processing_time": total_time,
@@ -465,6 +486,7 @@ def process_stream_body(url, sessionId):
                 preprocess_time = (time.time() - preprocess_start) * 1000
 
                 # Time feature extraction
+                # Just use clip for the feature extraction
                 feature_start = time.time()
                 with torch.no_grad():
                     features = clip_model.encode_image(processed)
@@ -472,6 +494,8 @@ def process_stream_body(url, sessionId):
                 feature_extraction_time = (time.time() - feature_start) * 1000
 
                 # Time prediction
+                # Use regression model from here https://github.com/zahid-isu/DriveCLIP/tree/main?tab=readme-ov-file
+                # Trained on clip feature output to produce single prediction output
                 prediction_start = time.time()
                 prediction = int(clip_classifier_body.predict(features)[0])
                 prob_score = clip_classifier_body.predict_proba(features)[0][prediction]
