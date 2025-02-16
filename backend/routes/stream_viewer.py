@@ -96,7 +96,7 @@ body_stream_index_to_label = {
     0: "Drinking beverage",
     1: "Adjusting hair, glasses, or makeup",
     2: "Talking on phone",
-    3: "Adjusting Radio or AC",  # Could change to reaching to simplify and better performance
+    3: "Reaching beside or behind",  # Was originally "Adjusting Radio or AC" but changed for performance
     4: "Reaching beside or behind",
     5: "Reaching beside or behind",
     6: "Driving Safely",
@@ -250,6 +250,31 @@ def process_stream_face(url, sessionId):
         ear_score = None
         mar_score = None
 
+        # If no face is found, draw Unknown in orange at top right
+        if len(faces) == 0:
+            font = cv2.FONT_HERSHEY_SIMPLEX
+            font_scale = 0.8
+            thickness = 2
+            text_to_draw = "Unknown"
+
+            (text_width, text_height), baseline = cv2.getTextSize(
+                text_to_draw, font, font_scale, thickness
+            )
+
+            padding = 10
+            text_x = frame_with_boxes.shape[1] - text_width - padding
+            text_y = text_height + padding
+
+            cv2.putText(
+                frame_with_boxes,
+                text_to_draw,
+                (text_x, text_y),
+                font,
+                font_scale,
+                (0, 165, 255),  # Orange in BGR
+                thickness,
+            )
+
         # Process the largest face if present
         if len(faces) > 0:
             # Find the largest face
@@ -273,7 +298,7 @@ def process_stream_face(url, sessionId):
 
             # Draw eye landmarks (circles)
             for x, y in np.concatenate((left_eye_pts, right_eye_pts)):
-                cv2.circle(frame_with_boxes, (x, y), 1, (0, 0, 255), -1)
+                cv2.circle(frame_with_boxes, (x, y), 1, (255, 255, 0), -1)
 
             # Compute EAR
             left_ear = compute_EAR(left_eye_pts)
@@ -285,26 +310,28 @@ def process_stream_face(url, sessionId):
             )
             ear_time = (time.time() - ear_start) * 1000
 
-            # Draw bounding box around both eyes and the classification text
+            # Draw bounding box around both eyes with color based on state
             eyes_pts = np.concatenate((left_eye_pts, right_eye_pts))
             (ex, ey, ew, eh) = cv2.boundingRect(eyes_pts)
-            cv2.rectangle(
-                frame_with_boxes, (ex, ey), (ex + ew, ey + eh), (0, 255, 0), 2
+            eye_color = (
+                (0, 255, 0) if eye_classification == "Eyes Open" else (0, 0, 255)
             )
+            cv2.rectangle(frame_with_boxes, (ex, ey), (ex + ew, ey + eh), eye_color, 2)
+
+            # Draw eye classification with EAR score
+            eye_text = f"{eye_classification} ({ear_score:.2f})"
             cv2.putText(
                 frame_with_boxes,
-                eye_classification,
+                eye_text,
                 (ex, ey - 10),
                 cv2.FONT_HERSHEY_SIMPLEX,
                 0.6,
-                (0, 255, 0),
+                eye_color,
                 2,
             )
 
             # 5. Mouth Aspect Ratio (MAR)
             mar_start = time.time()
-            # We need 8 points for the new MAR formula.
-            # Use the inner mouth points
             mouth_8_pts = shape_np[60:68]  # p1..p8
             mar_score = compute_MAR(mouth_8_pts)
             mouth_classification = (
@@ -312,21 +339,27 @@ def process_stream_face(url, sessionId):
             )
             mar_time = (time.time() - mar_start) * 1000
 
-            # Draw mouth landmarks (for visualization, show all outer mouth points [48..60])
+            # Draw mouth landmarks and box with color based on state
             outer_mouth_pts = shape_np[60:68]
             for mx, my in outer_mouth_pts:
-                cv2.circle(frame_with_boxes, (mx, my), 1, (255, 0, 255), -1)
+                cv2.circle(frame_with_boxes, (mx, my), 1, (255, 255, 0), -1)
             (mx, my, mw, mh) = cv2.boundingRect(outer_mouth_pts)
-            cv2.rectangle(
-                frame_with_boxes, (mx, my), (mx + mw, my + mh), (255, 255, 0), 2
+            mouth_color = (
+                (0, 255, 0) if mouth_classification == "Mouth Closed" else (0, 0, 255)
             )
+            cv2.rectangle(
+                frame_with_boxes, (mx, my), (mx + mw, my + mh), mouth_color, 2
+            )
+
+            # Draw mouth classification with MAR score
+            mouth_text = f"{mouth_classification} ({mar_score:.2f})"
             cv2.putText(
                 frame_with_boxes,
-                f"{mouth_classification}",
+                mouth_text,
                 (mx, my - 10),
                 cv2.FONT_HERSHEY_SIMPLEX,
                 0.6,
-                (255, 255, 0),
+                mouth_color,
                 2,
             )
 
@@ -499,17 +532,25 @@ def process_stream_body(url, sessionId):
                 # Time prediction
                 # Use regression model from here https://github.com/zahid-isu/DriveCLIP/tree/main?tab=readme-ov-file
                 # Trained on clip feature output to produce single prediction output
+                # Need to investigate biasing this prediction towards safe driving
                 prediction_start = time.time()
                 prediction = int(clip_classifier_body.predict(features)[0])
                 prob_score = clip_classifier_body.predict_proba(features)[0][prediction]
                 prediction_label = body_stream_index_to_label.get(prediction, "Unknown")
                 prediction_time = (time.time() - prediction_start) * 1000
 
+                # Set color based on prediction type
+                if prediction_label == "Driving Safely":
+                    text_color = (0, 255, 0)  # Green
+                elif prediction_label == "Unknown":
+                    text_color = (0, 165, 255)  # Orange
+                else:
+                    text_color = (0, 0, 255)  # Red for unsafe behaviors
+
                 # Draw prediction with probability in top right
                 font = cv2.FONT_HERSHEY_SIMPLEX
                 font_scale = 0.8
                 thickness = 2
-                text_color = (0, 255, 0)  # Green for predictions
                 text_to_draw = f"{prediction_label} ({prob_score:.2f})"
 
                 # Get text size for positioning
@@ -593,7 +634,7 @@ def process_stream_body(url, sessionId):
                     (text_x, text_y),
                     font,
                     font_scale,
-                    (0, 0, 255),  # Red for unknown
+                    (0, 165, 255),  # Orange in BGR
                     thickness,
                 )
 
@@ -623,7 +664,7 @@ def process_stream_body(url, sessionId):
                 (text_x, text_y),
                 font,
                 font_scale,
-                (0, 0, 255),  # Red for unknown
+                (0, 165, 255),  # Orange in BGR
                 thickness,
             )
 
