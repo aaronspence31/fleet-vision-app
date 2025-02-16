@@ -15,7 +15,6 @@ from PIL import Image
 from queue import Queue
 from firestore import body_drive_sessions, face_drive_sessions
 from flask import Blueprint, Response, make_response, request
-from openvino.runtime import Core
 import dlib
 from imutils import face_utils  # Helps convert dlib shapes to NumPy arrays
 
@@ -120,28 +119,6 @@ except Exception as e:
     logger.error(f"Error loading CLIP model: {str(e)}")
     raise
 
-# Initialize OpenVINO model
-ov_core = Core()
-# Try GPU first, fall back to CPU if not available
-try:
-    vino_device = "GPU"
-    # Test if GPU is available
-    if "GPU" not in ov_core.available_devices:
-        logger.warning("GPU device not available, falling back to CPU")
-        vino_device = "CPU"
-
-    logger.info(f"Using OpenVINO device: {vino_device}")
-    eye_model = ov_core.compile_model(
-        os.path.join(
-            model_dir, "open-closed-eye-0001/open-closed-eye.onnx"
-        ),  # Path to converted model
-        vino_device,
-    )
-    logger.info("All OpenVINO models loaded successfully")
-except Exception as e:
-    logger.error(f"Error initializing OpenVINO models: {str(e)}")
-    raise
-
 
 def save_face_frames_to_firestore(sessionId):
     global face_batch_start, face_frame_buffer_db
@@ -199,6 +176,161 @@ def save_body_frames_to_firestore(sessionId):
         body_batch_start = None
 
 
+# Face stream helper function to compute Eye Aspect Ratio (EAR)
+def compute_EAR(eye):
+    # Compute the Euclidean distances between the vertical eye landmarks
+    A = np.linalg.norm(eye[1] - eye[5])
+    B = np.linalg.norm(eye[2] - eye[4])
+    # Compute the distance between the horizontal eye landmarks
+    C = np.linalg.norm(eye[0] - eye[3])
+    ear = (A + B) / (2.0 * C)
+    return ear
+
+
+# Expect Open, Closed or Unknown as predictions on each frame
+# Paper talking about getting different drowsiness
+import numpy as np
+
+
+def compute_EAR(eye):
+    # Compute the Euclidean distances between the vertical eye landmarks
+    A = np.linalg.norm(eye[1] - eye[5])
+    B = np.linalg.norm(eye[2] - eye[4])
+    # Compute the Euclidean distance between the horizontal eye landmarks
+    C = np.linalg.norm(eye[0] - eye[3])
+    ear = (A + B) / (2.0 * C)
+    return ear
+
+
+# Predictions are Eyes Open, Eyes Closed or Unknown
+# Used paper here https://pmc.ncbi.nlm.nih.gov/articles/PMC11398282/
+def process_stream_face(url, sessionId):
+    global frame_count_face, face_stream_data_buffer, face_thread_kill, face_frame_buffer_db, face_batch_start
+
+    cap = cv2.VideoCapture(url)
+    cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)  # Limit buffer size for real-time streaming
+
+    while not face_thread_kill:
+        success, frame = cap.read()
+        if not success:
+            logger.error(f"FACE_STREAM: Failed to read frame from {url}")
+            time.sleep(0.1)
+            continue
+
+        frame_count_face += 1
+        frame_start_time = time.time()
+
+        # Convert to grayscale for detection and landmark prediction
+        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        faces = faceCascade.detectMultiScale(gray, 1.15, 2)
+        frame_with_boxes = frame.copy()
+
+        # Default prediction
+        classification = "Unknown"
+        ear_score = None
+
+        if len(faces) > 0:
+            # Use the first detected face
+            fx, fy, fw, fh = faces[0]
+            cv2.rectangle(
+                frame_with_boxes, (fx, fy), (fx + fw, fy + fh), (255, 0, 0), 2
+            )
+            # Define roi_color as the face region (for drawing purposes)
+            roi_color = frame_with_boxes[fy : fy + fh, fx : fx + fw]
+
+            # Create a dlib rectangle using absolute face coordinates
+            dlib_rect = dlib.rectangle(int(fx), int(fy), int(fx + fw), int(fy + fh))
+            # Get the facial landmarks
+            shape = landmark_predictor(gray, dlib_rect)
+            shape_np = face_utils.shape_to_np(shape)
+
+            # Extract landmarks for both eyes
+            left_eye_pts = shape_np[36:42]
+            right_eye_pts = shape_np[42:48]
+
+            # Draw all eye landmarks for debugging (both eyes)
+            for x, y in np.concatenate((left_eye_pts, right_eye_pts)):
+                cv2.circle(frame_with_boxes, (x, y), 1, (0, 0, 255), -1)
+
+            # Compute the EAR for both eyes and average them
+            left_ear = compute_EAR(left_eye_pts)
+            right_ear = compute_EAR(right_eye_pts)
+            avg_ear = (left_ear + right_ear) / 2.0
+
+            # Classify eye state based on average EAR threshold
+            if avg_ear > 0.25:
+                eye_state = "Open"
+            else:
+                eye_state = "Closed"
+            classification = f"Eyes {eye_state}"
+            ear_score = avg_ear
+
+            # Optionally, draw bounding boxes around both eyes for visualization
+            (lex, ley, lew, leh) = cv2.boundingRect(left_eye_pts)
+            (rex, rey, rew, reh) = cv2.boundingRect(right_eye_pts)
+            # Convert absolute coordinates to relative ones for drawing on roi_color
+            rel_lex = lex - fx
+            rel_ley = ley - fy
+            rel_rex = rex - fx
+            rel_rey = rey - fy
+
+            cv2.rectangle(
+                roi_color,
+                (rel_lex, rel_ley),
+                (rel_lex + lew, rel_ley + leh),
+                (0, 255, 0),
+                2,
+            )
+            cv2.rectangle(
+                roi_color,
+                (rel_rex, rel_rey),
+                (rel_rex + rew, rel_rey + reh),
+                (0, 255, 0),
+                2,
+            )
+            cv2.putText(
+                roi_color,
+                f"{eye_state}",
+                (rel_lex, rel_ley - 10),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.6,
+                (0, 255, 0),
+                2,
+            )
+
+        # Log processing time
+        frame_time = (time.time() - frame_start_time) * 1000
+        logger.info(
+            f"FACE_STREAM: Frame {frame_count_face} processed in {frame_time:.2f}ms - Classification: {classification}"
+        )
+
+        # Encode frame for streaming
+        _, buffer = cv2.imencode(".jpg", frame_with_boxes)
+        frame_base64 = base64.b64encode(buffer).decode("utf-8")
+
+        # Firestore DB save
+        if len(face_frame_buffer_db) == 0:
+            face_batch_start = int(time.time())
+        if len(face_frame_buffer_db) < NUM_FRAMES_BEFORE_STORE_IN_DB:
+            face_frame_buffer_db.append(classification)
+        if len(face_frame_buffer_db) >= NUM_FRAMES_BEFORE_STORE_IN_DB:
+            save_face_frames_to_firestore(sessionId)
+
+        # Stream output
+        if face_stream_data_buffer.full():
+            face_stream_data_buffer.get_nowait()
+        face_stream_data_buffer.put(
+            {
+                "image": frame_base64,
+                "prediction": classification,
+                "ear_score": ear_score,
+                "frame_number": frame_count_face,
+                "timestamp": int(time.time()),
+            }
+        )
+
+
+# Body stream helper function
 def preprocess_frame_clip(frame, preprocess):
     # Convert BGR to RGB and to PIL
     rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
@@ -209,6 +341,7 @@ def preprocess_frame_clip(frame, preprocess):
     return processed.unsqueeze(0)
 
 
+# Body stream helper function
 # Detect a person in frame so we return unknown if there is no person detected
 # This needs to be extremely fast as it will be called every frame
 def detect_person_in_frame(frame, isFaceStream, scale_factor=1.2, min_neighbors=1):
@@ -276,154 +409,6 @@ def detect_person_in_frame(frame, isFaceStream, scale_factor=1.2, min_neighbors=
             f"BODY_STREAM: Person detection completed in {detection_time:.2f}ms (Person {'detected' if len(faces) > 0 else 'not detected'})"
         )
         return len(faces) > 0
-
-
-# Expect Eyes Open, Eyes Closed or Unknown as predictions on each frame
-def process_stream_face(url, sessionId):
-    global frame_count_face, face_stream_data_buffer, face_thread_kill, face_frame_buffer_db, face_batch_start
-    EYE_MODEL_THRESHOLD = 0.5
-
-    # Create inference request for eye model
-    eye_req = eye_model.create_infer_request()
-
-    cap = cv2.VideoCapture(url)
-    cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)  # Limit buffer size for real-time streaming
-
-    while not face_thread_kill:
-        success, frame = cap.read()
-        if not success:
-            logger.error(f"FACE_STREAM: Failed to read frame from {url}")
-            time.sleep(0.1)
-            continue
-
-        frame_count_face += 1
-        frame_start_time = time.time()
-
-        # Convert to grayscale for detection and landmark prediction
-        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-        faces = faceCascade.detectMultiScale(gray, 1.15, 2)
-        frame_with_boxes = frame.copy()
-
-        # Default prediction
-        classification = "Unknown"
-        final_classification_prob_value = None
-        eye_detected = False
-
-        if len(faces) > 0:
-            # Use the first detected face
-            fx, fy, fw, fh = faces[0]
-            cv2.rectangle(
-                frame_with_boxes, (fx, fy), (fx + fw, fy + fh), (255, 0, 0), 2
-            )
-            # Define roi_color as the face region (for drawing purposes)
-            roi_color = frame_with_boxes[fy : fy + fh, fx : fx + fw]
-
-            # Create a dlib rectangle using absolute face coordinates
-            dlib_rect = dlib.rectangle(int(fx), int(fy), int(fx + fw), int(fy + fh))
-            # Get the facial landmarks
-            shape = landmark_predictor(gray, dlib_rect)
-            shape_np = face_utils.shape_to_np(shape)
-
-            # Extract landmarks for left eye (points 36–41)
-            left_eye_pts = shape_np[36:42]
-            # Compute bounding box for the left eye in absolute coordinates
-            (ex, ey, ew, eh) = cv2.boundingRect(left_eye_pts)
-            # Define separate padding factors
-            padding_left = int(0.6 * ew)
-            padding_right = int(0.6 * ew)
-            padding_top = int(2.0 * eh)  # More padding on top
-            padding_bottom = int(0.6 * eh)  # Less padding on bottom
-            # Update the coordinates and dimensions with the new paddings
-            ex = max(ex - padding_left, 0)
-            ey = max(ey - padding_top, 0)
-            ew = ew + padding_left + padding_right
-            eh = eh + padding_top + padding_bottom
-            # Crop the eye ROI from the full frame
-            eye_roi = frame[ey : ey + eh, ex : ex + ew]
-            eye_detected = True
-            eye_type = "Left"
-
-            # Draw the left eye landmarks on the full frame (for debugging)
-            for x, y in left_eye_pts:
-                cv2.circle(frame_with_boxes, (x, y), 1, (0, 0, 255), -1)
-
-            # Convert absolute coordinates to relative ones for drawing on roi_color
-            rel_ex = ex - fx
-            rel_ey = ey - fy
-            cv2.rectangle(
-                roi_color, (rel_ex, rel_ey), (rel_ex + ew, rel_ey + eh), (0, 255, 0), 2
-            )
-            cv2.putText(
-                roi_color,
-                f"{eye_type}",
-                (rel_ex, rel_ey - 10),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                0.6,
-                (0, 255, 0),
-                2,
-            )
-
-            if eye_detected:
-                # Preprocess the eye ROI for the model:
-                # 1. Resize to 32x32.
-                processed_eye = cv2.resize(eye_roi, (32, 32))
-                # 2. Convert to float32.
-                processed_eye = processed_eye.astype(np.float32)
-                # 3. Normalize: subtract mean [127.0, 127.0, 127.0] and scale by 1/255.
-                processed_eye = (processed_eye - 127.0) / 255.0
-                # 4. Change layout from HWC to CHW.
-                processed_eye = processed_eye.transpose(2, 0, 1)
-                # 5. Add a batch dimension to obtain shape [1, 3, 32, 32].
-                processed_eye = processed_eye[None, ...]
-
-                # Run inference
-                eye_req.infer({0: processed_eye})
-                probs = eye_req.get_output_tensor().data[0]
-                prob_value = float(probs[0])
-                # Use standard threshold to decide eye state
-                eye_state = "Open" if prob_value <= EYE_MODEL_THRESHOLD else "Closed"
-                classification = f"Eyes {eye_state}"
-
-                # Map the probability to a value between 0 and 1 for logging/display
-                if prob_value <= EYE_MODEL_THRESHOLD:
-                    final_classification_prob_value = 1.0 - (prob_value * 2)
-                else:
-                    final_classification_prob_value = (prob_value - 0.5) * 2
-
-                logger.debug(
-                    f"FACE_STREAM: {eye_type} eye classified as {eye_state} (prob: {prob_value:.2f})"
-                )
-
-        # Log processing time
-        frame_time = (time.time() - frame_start_time) * 1000
-        logger.info(
-            f"FACE_STREAM: Frame {frame_count_face} processed in {frame_time:.2f}ms - Classification: {classification}"
-        )
-
-        # Encode frame for streaming
-        _, buffer = cv2.imencode(".jpg", frame_with_boxes)
-        frame_base64 = base64.b64encode(buffer).decode("utf-8")
-
-        # Firestore DB save
-        if len(face_frame_buffer_db) == 0:
-            face_batch_start = int(time.time())
-        if len(face_frame_buffer_db) < NUM_FRAMES_BEFORE_STORE_IN_DB:
-            face_frame_buffer_db.append(classification)
-        if len(face_frame_buffer_db) >= NUM_FRAMES_BEFORE_STORE_IN_DB:
-            save_face_frames_to_firestore(sessionId)
-
-        # Stream output
-        if face_stream_data_buffer.full():
-            face_stream_data_buffer.get_nowait()
-        face_stream_data_buffer.put(
-            {
-                "image": frame_base64,
-                "prediction": classification,
-                "probability": final_classification_prob_value,
-                "frame_number": frame_count_face,
-                "timestamp": int(time.time()),
-            }
-        )
 
 
 # Expect body_stream_index_to_label classifications and Unknown as predictions on each frame

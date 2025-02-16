@@ -1,14 +1,14 @@
 export interface ServerResponse {
     image: string;
     prediction: string;
-    probability: string;
+    ear_score: string;
     frame_number: string;
     timestamp: string;
 }
   
 export interface LiveFrame {
     value: string;
-    probability: number;
+    ear_score: number;
     frameNum: number;
     timestamp: number;
     camera: 'Face' | 'Body';

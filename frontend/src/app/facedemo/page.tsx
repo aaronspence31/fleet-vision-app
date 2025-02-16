@@ -23,7 +23,7 @@ export default function FaceDemo() {
 
       addLivePrediction({
         value: data.prediction,
-        probability: parseFloat(data.probability),
+        earScore: parseFloat(data.ear_score),
         frameNum: parseInt(data.frame_number),
         timestamp: parseInt(data.timestamp),
         camera: "Face",
@@ -82,7 +82,7 @@ export default function FaceDemo() {
               </Typography>
               <Divider orientation="vertical" flexItem />
               <Typography textAlign="center" width={150}>
-                {`${(prediction.probability * 100).toFixed(2)}%`}
+                {`${(prediction.earScore).toFixed(2)}`}
               </Typography>
             </Box>
           ))}
