@@ -23,3 +23,5 @@ regex
 tqdm
 openai-clip
 scikit-learn
+openvino
+openvino-dev

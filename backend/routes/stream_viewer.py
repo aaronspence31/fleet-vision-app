@@ -14,8 +14,8 @@ import queue
 from PIL import Image
 from queue import Queue
 from firestore import body_drive_sessions, face_drive_sessions
-from helpers.model import classify_main_batch
 from flask import Blueprint, Response, make_response, request
+from openvino.runtime import Core, AsyncInferQueue
 
 stream_viewer = Blueprint("stream_viewer", __name__)
 logging.basicConfig(
@@ -24,29 +24,35 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Buffer for OBD data
-obd_data_buffer = Queue(maxsize=100)
+obd_data_buffer = Queue(maxsize=1)
 
 # Constants
 # If your FACE_STREAM_URL and BODY_STREAM_URL are the same, you will get errors!
 # FACE_STREAM_URL = "http://172.20.10.3/stream"  # ai thinker hotspot aaron
-FACE_STREAM_URL = "http://192.168.0.104/stream"  # wrover home wifi aaron
+FACE_STREAM_URL = "http://192.168.0.108/stream"  # wrover home wifi aaron
 # BODY_STREAM_URL = "http://172.20.10.8/stream"  # ai thinker hotspot aaron
 BODY_STREAM_URL = "http://192.168.0.105/stream"  # ai thinker home wifi aaron
 # Clip constants
 CLIP_MODEL_NAME = "ViT-L/14"
 CLIP_INPUT_SIZE = 224
 CLIP_MODEL_PATH_BODY = "dmd29_vitbl14-hypc_429_1000_ft.pkl"
-CLIP_MODEL_PATH_FACE = "sam-dd-front_vitbl14-hypc_429_1000_ft.pkl"
 
 # Setup cv2 classifiers to detect a person in the frame
 faceCascade = cv2.CascadeClassifier(
-    cv2.data.haarcascades + "haarcascade_frontalface_default.xml"
+    cv2.data.haarcascades + "haarcascade_frontalface_alt.xml"
 )
 profileFaceCascade = cv2.CascadeClassifier(
     cv2.data.haarcascades + "haarcascade_profileface.xml"
 )
 upperBodyCascade = cv2.CascadeClassifier(
     cv2.data.haarcascades + "haarcascade_upperbody.xml"
+)
+# Setup cv2 classifier to detect eyes
+leftEyeCascade = cv2.CascadeClassifier(
+    cv2.data.haarcascades + "haarcascade_lefteye_2splits.xml"
+)
+rightEyeCascade = cv2.CascadeClassifier(
+    cv2.data.haarcascades + "haarcascade_righteye_2splits.xml"
 )
 
 base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -73,23 +79,9 @@ body_stream_data_buffer = Queue(maxsize=1)
 clip_model = None
 clip_preprocess = None
 clip_classifier_body = None
-clip_classifier_face = None
 device = "cuda" if torch.cuda.is_available() else "cpu"
-logger.info(f"Using device: {device}")
+logger.info(f"CLIP Using device: {device}")
 
-# TODO: Frontend code should also handle Unknown as a prediction
-face_stream_index_to_label = {
-    0: "Driving Safely",
-    1: "Drinking beverage",
-    2: "Talking on phone",
-    3: "Talking on phone",
-    4: "Texting/using phone",
-    5: "Texting/using phone",
-    6: "Adjusting hair, glasses, or makeup",
-    7: "Adjusting hair, glasses, or makeup",
-    8: "Reaching beside or behind",
-    9: "Dropping head",
-}
 # TODO: Frontend code should also handle Unknown as a prediction
 body_stream_index_to_label = {
     0: "Drinking beverage",
@@ -107,18 +99,41 @@ body_stream_index_to_label = {
 
 # Initialize CLIP components
 def init_clip():
-    global clip_model, clip_preprocess, clip_classifier_body, clip_classifier_face
+    global clip_model, clip_preprocess, clip_classifier_body
     clip_model, clip_preprocess = clip.load(CLIP_MODEL_NAME, device)
     clip_model.eval()
     clip_classifier_body = joblib.load(os.path.join(model_dir, CLIP_MODEL_PATH_BODY))
-    clip_classifier_face = joblib.load(os.path.join(model_dir, CLIP_MODEL_PATH_BODY))
 
 
+# Initialize CLIP components
 try:
     init_clip()
     logger.info("CLIP model and classifier loaded successfully")
 except Exception as e:
     logger.error(f"Error loading CLIP model: {str(e)}")
+    raise
+
+# Initialize OpenVINO model
+ov_core = Core()
+# Try GPU first, fall back to CPU if not available
+try:
+    vino_device = "GPU"
+    # Test if GPU is available
+    if "GPU" not in ov_core.available_devices:
+        logger.warning("GPU device not available, falling back to CPU")
+        vino_device = "CPU"
+
+    logger.info(f"Using OpenVINO device: {vino_device}")
+    eye_model = ov_core.compile_model(
+        os.path.join(
+            model_dir, "open-closed-eye-0001/open-closed-eye.onnx"
+        ),  # Path to converted model
+        vino_device,
+    )
+    logger.info("All OpenVINO models loaded successfully")
+except Exception as e:
+    logger.error(f"Error initializing OpenVINO models: {str(e)}")
+    raise
 
 
 def save_face_frames_to_firestore(sessionId):
@@ -256,88 +271,153 @@ def detect_person_in_frame(frame, isFaceStream, scale_factor=1.2, min_neighbors=
         return len(faces) > 0
 
 
+# Expect Eyes Open, Eyes Closed or Unknown as predictions on each frame
 def process_stream_face(url, sessionId):
-    global frame_count_face, clip_model, clip_preprocess, clip_classifier_face, face_batch_start, face_stream_data_buffer, face_frame_buffer_db, face_thread_kill
+    global frame_count_face, face_stream_data_buffer, face_thread_kill, face_frame_buffer_db, face_batch_start
+    EYE_MODEL_THRESHOLD = 0.5
 
-    if not all([clip_model, clip_preprocess, clip_classifier_face]):
-        logger.error("FACE_STREAM: CLIP components not initialized")
-        return
+    # Create inference request for eye model
+    eye_req = eye_model.create_infer_request()
 
     cap = cv2.VideoCapture(url)
+    cap.set(
+        cv2.CAP_PROP_BUFFERSIZE, 1
+    )  # limit buffer size to make stream more real-time
 
-    while True:
+    while not face_thread_kill:
         success, frame = cap.read()
-        if face_thread_kill:
-            return
-
         if not success:
-            logger.error(f"FACE_STREAM: failed to read frame from {url}")
+            logger.error(f"FACE_STREAM: Failed to read frame from {url}")
             time.sleep(0.1)
             continue
 
         frame_count_face += 1
-        prediction = None
-        prob_score = None
-        prediction_label = "Unknown"  # Default to Unknown
+        frame_start_time = time.time()
 
-        # person_detected = detect_person_in_frame(frame, True)
-        person_detected = True  # Not using person detection for now
+        # Convert to grayscale for detection
+        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        faces = faceCascade.detectMultiScale(gray, 1.15, 2)
+        frame_with_boxes = frame.copy()
 
-        if person_detected:
-            try:
-                prediction_start_time = time.time()
-                with torch.no_grad():
-                    processed = preprocess_frame_clip(frame, clip_preprocess).to(device)
-                    features = clip_model.encode_image(processed)
-                    features = features.cpu().numpy()
+        # Default prediction
+        classification = "Unknown"
+        final_classification_prob_value = None
+        eye_detected = False
 
-                    prediction = int(clip_classifier_face.predict(features)[0])
-                    prob_score = clip_classifier_face.predict_proba(features)[0][
-                        prediction
-                    ]
-                    prediction_label = face_stream_index_to_label.get(
-                        prediction, "Unknown"
-                    )
-
-                prediction_time = (time.time() - prediction_start_time) * 1000
-                logger.info(
-                    f"FACE_STREAM: Frame {frame_count_face}: Processing time={prediction_time:.2f}ms, Prediction={prediction_label}, Probability={prob_score}"
-                )
-
-            except Exception as e:
-                logger.error(f"FACE_STREAM: Error in inference: {str(e)}")
-                prediction_label = "Unknown"
-                prob_score = None
-        else:
-            logger.info(
-                f"FACE_STREAM: Frame {frame_count_face}: No person detected, prediction set to Unknown"
+        if len(faces) > 0:
+            fx, fy, fw, fh = faces[0]  # Use first detected face
+            cv2.rectangle(
+                frame_with_boxes, (fx, fy), (fx + fw, fy + fh), (255, 0, 0), 2
             )
 
-        # Firestore DB saving
+            roi_gray = gray[fy : fy + fh, fx : fx + fw]
+            roi_color = frame_with_boxes[fy : fy + fh, fx : fx + fw]
+
+            # Try left eye first
+            left_eye = leftEyeCascade.detectMultiScale(roi_gray, 1.05, 5)
+            if len(left_eye) > 0:
+                ex, ey, ew, eh = left_eye[0]  # Use first left eye
+                eye_roi = frame[fy + ey : fy + ey + eh, fx + ex : fx + ex + ew]
+                eye_detected = True
+                eye_type = "Left"
+            else:
+                # Try right eye if no left eye found
+                right_eye = rightEyeCascade.detectMultiScale(roi_gray, 1.05, 5)
+                if len(right_eye) > 0:
+                    ex, ey, ew, eh = right_eye[0]  # Use first right eye
+                    eye_roi = frame[fy + ey : fy + ey + eh, fx + ex : fx + ex + ew]
+                    eye_detected = True
+                    eye_type = "Right"
+
+            if eye_detected:
+                # Time model inference
+                # From experience this takes about a ms
+                # Open CV haarcascades are definitely the bottleneck here
+                model_start_time = time.time()
+
+                # 1. Resize to 32x32.
+                processed_eye = cv2.resize(eye_roi, (32, 32))
+                # 2. Convert to float32.
+                processed_eye = processed_eye.astype(np.float32)
+                # 3. Normalize: subtract mean [127.0, 127.0, 127.0] and scale by 1/255.
+                processed_eye = (processed_eye - 127.0) / 255.0
+                # 4. Change layout from HWC to CHW.
+                processed_eye = processed_eye.transpose(2, 0, 1)
+                # 5. Add a batch dimension to obtain shape [1, 3, 32, 32].
+                processed_eye = processed_eye[None, ...]
+                # Run inference
+                eye_req.infer({0: processed_eye})
+                probs = eye_req.get_output_tensor().data[0]
+                prob_value = float(probs[0])  # Convert numpy value to float
+                # use standard threshold of EYE_MODEL_THRESHOLD
+                eye_state = "Open" if prob_value <= EYE_MODEL_THRESHOLD else "Closed"
+                classification = f"Eyes {eye_state}"
+
+                # get a meaningful probability value for prediction
+                if prob_value <= EYE_MODEL_THRESHOLD:
+                    # Eye is Open
+                    final_classification_prob_value = 1.0 - (
+                        prob_value * 2
+                    )  # Maps [0.0, 0.5] to [1.0, 0.0]
+                else:
+                    # Eye is Closed
+                    final_classification_prob_value = (
+                        prob_value - 0.5
+                    ) * 2  # Maps [0.5, 1.0] to [0.0, 1.0]
+
+                # log model inference time
+                model_time = (time.time() - model_start_time) * 1000
+                logger.debug(f"FACE_STREAM: OpenVINO inference took {model_time:.2f}ms")
+
+                # Draw eye rectangle and state
+                cv2.rectangle(roi_color, (ex, ey), (ex + ew, ey + eh), (0, 255, 0), 2)
+                cv2.putText(
+                    roi_color,
+                    f"{eye_type} {eye_state}",
+                    (ex, ey - 10),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.6,
+                    (0, 255, 0),
+                    2,
+                )
+
+                logger.debug(
+                    f"FACE_STREAM: {eye_type} eye classified as {eye_state} (prob: {prob_value:.2f})"
+                )
+
+        # Log processing time
+        frame_time = (time.time() - frame_start_time) * 1000
+        logger.info(
+            f"FACE_STREAM: Frame {frame_count_face} processed in {frame_time:.2f}ms - Classification: {classification}"
+        )
+
+        # Encode frame for streaming - always use frame_with_boxes
+        _, buffer = cv2.imencode(".jpg", frame_with_boxes)
+        frame_base64 = base64.b64encode(buffer).decode("utf-8")
+
+        # Firestore DB save
         if len(face_frame_buffer_db) == 0:
             face_batch_start = int(time.time())
         if len(face_frame_buffer_db) < NUM_FRAMES_BEFORE_STORE_IN_DB:
-            face_frame_buffer_db.append(prediction_label)
+            face_frame_buffer_db.append(classification)
         if len(face_frame_buffer_db) >= NUM_FRAMES_BEFORE_STORE_IN_DB:
             save_face_frames_to_firestore(sessionId)
 
-        # Encode frame for streaming
-        _, buffer = cv2.imencode(".jpg", frame)
-        frame_base64 = base64.b64encode(buffer).decode("utf-8")
-
+        # Stream output
         if face_stream_data_buffer.full():
             face_stream_data_buffer.get_nowait()
         face_stream_data_buffer.put(
             {
                 "image": frame_base64,
-                "prediction": prediction_label,
-                "probability": prob_score,
+                "prediction": classification,
+                "probability": final_classification_prob_value,
                 "frame_number": frame_count_face,
                 "timestamp": int(time.time()),
             }
         )
 
 
+# Expect body_stream_index_to_label classifications and Unknown as predictions on each frame
 def process_stream_body(url, sessionId):
     global frame_count_body, clip_model, clip_preprocess, clip_classifier_body, body_batch_start, body_stream_data_buffer, body_frame_buffer_db, body_thread_kill
 
@@ -346,15 +426,16 @@ def process_stream_body(url, sessionId):
         return
 
     cap = cv2.VideoCapture(url)
+    cap.set(
+        cv2.CAP_PROP_BUFFERSIZE, 1
+    )  # limit buffer size to make stream more real-time
 
-    while True:
+    while not body_thread_kill:
         success, frame = cap.read()
-        if body_thread_kill:
-            return
 
         if not success:
             logger.error(f"BODY_STREAM: Failed to read frame from {url}")
-            time.sleep(0.1)
+            time.sleep(1.0)
             continue
 
         frame_count_body += 1
@@ -641,8 +722,11 @@ def body_stream_view():
     return Response(generate(), mimetype="text/event-stream")
 
 
+# TODO: Save to the database if we are on a different second based on server time
+# Store the last second we saved with somewhere globally to know if it changed
 @stream_viewer.route("/obd_data", methods=["POST"])
 def receive_obd_data():
+    global obd_data_buffer
     try:
         data = request.get_json()
         required_fields = ["speed", "rpm", "timestamp"]
@@ -682,6 +766,8 @@ def receive_obd_data():
 
 @stream_viewer.route("/obd_stream_view")
 def obd_stream_view():
+    global obd_data_buffer
+
     def generate():
         while True:
             try:
