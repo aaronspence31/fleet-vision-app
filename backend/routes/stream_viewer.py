@@ -476,6 +476,9 @@ def process_stream_body(url, sessionId):
         prob_score = None
         prediction_label = "Unknown"
 
+        # Create a copy for visualization
+        frame_with_text = frame.copy()
+
         person_detected = True  # Not using person detection for now
 
         if person_detected:
@@ -502,9 +505,36 @@ def process_stream_body(url, sessionId):
                 prediction_label = body_stream_index_to_label.get(prediction, "Unknown")
                 prediction_time = (time.time() - prediction_start) * 1000
 
+                # Draw prediction with probability in top right
+                font = cv2.FONT_HERSHEY_SIMPLEX
+                font_scale = 0.8
+                thickness = 2
+                text_color = (0, 255, 0)  # Green for predictions
+                text_to_draw = f"{prediction_label} ({prob_score:.2f})"
+
+                # Get text size for positioning
+                (text_width, text_height), baseline = cv2.getTextSize(
+                    text_to_draw, font, font_scale, thickness
+                )
+
+                # Position text in top right with padding
+                padding = 10
+                text_x = frame_with_text.shape[1] - text_width - padding
+                text_y = text_height + padding
+
+                cv2.putText(
+                    frame_with_text,
+                    text_to_draw,
+                    (text_x, text_y),
+                    font,
+                    font_scale,
+                    text_color,
+                    thickness,
+                )
+
                 # Time frame encoding
                 encode_start = time.time()
-                _, buffer = cv2.imencode(".jpg", frame)
+                _, buffer = cv2.imencode(".jpg", frame_with_text)
                 frame_base64 = base64.b64encode(buffer).decode("utf-8")
                 encoding_time = (time.time() - encode_start) * 1000
 
@@ -540,10 +570,66 @@ def process_stream_body(url, sessionId):
                 logger.error(f"BODY_STREAM: Error in inference: {str(e)}")
                 prediction_label = "Unknown"
                 prob_score = None
+
+                # Draw "Unknown" with consistent positioning
+                font = cv2.FONT_HERSHEY_SIMPLEX
+                font_scale = 0.8
+                thickness = 2
+                text_to_draw = "Unknown"
+
+                # Get text size for positioning
+                (text_width, text_height), baseline = cv2.getTextSize(
+                    text_to_draw, font, font_scale, thickness
+                )
+
+                # Position text in top right with padding
+                padding = 10
+                text_x = frame_with_text.shape[1] - text_width - padding
+                text_y = text_height + padding
+
+                cv2.putText(
+                    frame_with_text,
+                    text_to_draw,
+                    (text_x, text_y),
+                    font,
+                    font_scale,
+                    (0, 0, 255),  # Red for unknown
+                    thickness,
+                )
+
+                # Encode frame with "Unknown" text
+                _, buffer = cv2.imencode(".jpg", frame_with_text)
+                frame_base64 = base64.b64encode(buffer).decode("utf-8")
         else:
+            # Draw "Unknown" for no person detected with consistent positioning
+            font = cv2.FONT_HERSHEY_SIMPLEX
+            font_scale = 0.8
+            thickness = 2
+            text_to_draw = "Unknown"
+
+            # Get text size for positioning
+            (text_width, text_height), baseline = cv2.getTextSize(
+                text_to_draw, font, font_scale, thickness
+            )
+
+            # Position text in top right with padding
+            padding = 10
+            text_x = frame_with_text.shape[1] - text_width - padding
+            text_y = text_height + padding
+
+            cv2.putText(
+                frame_with_text,
+                text_to_draw,
+                (text_x, text_y),
+                font,
+                font_scale,
+                (0, 0, 255),  # Red for unknown
+                thickness,
+            )
+
             # Time frame encoding for failed detection case
             encode_start = time.time()
-            _, buffer = cv2.imencode(".jpg", frame)
+            _, buffer = cv2.imencode(".jpg", frame_with_text)
             frame_base64 = base64.b64encode(buffer).decode("utf-8")
             encoding_time = (time.time() - encode_start) * 1000
 
