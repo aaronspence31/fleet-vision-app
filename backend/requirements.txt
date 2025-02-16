@@ -25,3 +25,5 @@ openai-clip
 scikit-learn
 openvino
 openvino-dev
+dlib
+imutils

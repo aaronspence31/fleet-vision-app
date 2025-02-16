@@ -15,7 +15,9 @@ from PIL import Image
 from queue import Queue
 from firestore import body_drive_sessions, face_drive_sessions
 from flask import Blueprint, Response, make_response, request
-from openvino.runtime import Core, AsyncInferQueue
+from openvino.runtime import Core
+import dlib
+from imutils import face_utils  # Helps convert dlib shapes to NumPy arrays
 
 stream_viewer = Blueprint("stream_viewer", __name__)
 logging.basicConfig(
@@ -57,6 +59,11 @@ rightEyeCascade = cv2.CascadeClassifier(
 
 base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 model_dir = os.path.join(base_dir, "models")
+
+# Setup dlib face landmark predictor to find eyes
+landmark_predictor = dlib.shape_predictor(
+    os.path.join(model_dir, "shape_predictor_68_face_landmarks.dat")
+)
 
 # WHY BUFFER RATHER THAN JUST SAVING TO FIRESTORE IMMEDIATELY?
 NUM_FRAMES_BEFORE_STORE_IN_DB = 60
@@ -280,9 +287,7 @@ def process_stream_face(url, sessionId):
     eye_req = eye_model.create_infer_request()
 
     cap = cv2.VideoCapture(url)
-    cap.set(
-        cv2.CAP_PROP_BUFFERSIZE, 1
-    )  # limit buffer size to make stream more real-time
+    cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)  # Limit buffer size for real-time streaming
 
     while not face_thread_kill:
         success, frame = cap.read()
@@ -294,7 +299,7 @@ def process_stream_face(url, sessionId):
         frame_count_face += 1
         frame_start_time = time.time()
 
-        # Convert to grayscale for detection
+        # Convert to grayscale for detection and landmark prediction
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
         faces = faceCascade.detectMultiScale(gray, 1.15, 2)
         frame_with_boxes = frame.copy()
@@ -305,36 +310,61 @@ def process_stream_face(url, sessionId):
         eye_detected = False
 
         if len(faces) > 0:
-            fx, fy, fw, fh = faces[0]  # Use first detected face
+            # Use the first detected face
+            fx, fy, fw, fh = faces[0]
             cv2.rectangle(
                 frame_with_boxes, (fx, fy), (fx + fw, fy + fh), (255, 0, 0), 2
             )
-
-            roi_gray = gray[fy : fy + fh, fx : fx + fw]
+            # Define roi_color as the face region (for drawing purposes)
             roi_color = frame_with_boxes[fy : fy + fh, fx : fx + fw]
 
-            # Try left eye first
-            left_eye = leftEyeCascade.detectMultiScale(roi_gray, 1.05, 5)
-            if len(left_eye) > 0:
-                ex, ey, ew, eh = left_eye[0]  # Use first left eye
-                eye_roi = frame[fy + ey : fy + ey + eh, fx + ex : fx + ex + ew]
-                eye_detected = True
-                eye_type = "Left"
-            else:
-                # Try right eye if no left eye found
-                right_eye = rightEyeCascade.detectMultiScale(roi_gray, 1.05, 5)
-                if len(right_eye) > 0:
-                    ex, ey, ew, eh = right_eye[0]  # Use first right eye
-                    eye_roi = frame[fy + ey : fy + ey + eh, fx + ex : fx + ex + ew]
-                    eye_detected = True
-                    eye_type = "Right"
+            # Create a dlib rectangle using absolute face coordinates
+            dlib_rect = dlib.rectangle(int(fx), int(fy), int(fx + fw), int(fy + fh))
+            # Get the facial landmarks
+            shape = landmark_predictor(gray, dlib_rect)
+            shape_np = face_utils.shape_to_np(shape)
+
+            # Extract landmarks for left eye (points 36–41)
+            left_eye_pts = shape_np[36:42]
+            # Compute bounding box for the left eye in absolute coordinates
+            (ex, ey, ew, eh) = cv2.boundingRect(left_eye_pts)
+            # Define separate padding factors
+            padding_left = int(0.6 * ew)
+            padding_right = int(0.6 * ew)
+            padding_top = int(2.0 * eh)  # More padding on top
+            padding_bottom = int(0.6 * eh)  # Less padding on bottom
+            # Update the coordinates and dimensions with the new paddings
+            ex = max(ex - padding_left, 0)
+            ey = max(ey - padding_top, 0)
+            ew = ew + padding_left + padding_right
+            eh = eh + padding_top + padding_bottom
+            # Crop the eye ROI from the full frame
+            eye_roi = frame[ey : ey + eh, ex : ex + ew]
+            eye_detected = True
+            eye_type = "Left"
+
+            # Draw the left eye landmarks on the full frame (for debugging)
+            for x, y in left_eye_pts:
+                cv2.circle(frame_with_boxes, (x, y), 1, (0, 0, 255), -1)
+
+            # Convert absolute coordinates to relative ones for drawing on roi_color
+            rel_ex = ex - fx
+            rel_ey = ey - fy
+            cv2.rectangle(
+                roi_color, (rel_ex, rel_ey), (rel_ex + ew, rel_ey + eh), (0, 255, 0), 2
+            )
+            cv2.putText(
+                roi_color,
+                f"{eye_type}",
+                (rel_ex, rel_ey - 10),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.6,
+                (0, 255, 0),
+                2,
+            )
 
             if eye_detected:
-                # Time model inference
-                # From experience this takes about a ms
-                # Open CV haarcascades are definitely the bottleneck here
-                model_start_time = time.time()
-
+                # Preprocess the eye ROI for the model:
                 # 1. Resize to 32x32.
                 processed_eye = cv2.resize(eye_roi, (32, 32))
                 # 2. Convert to float32.
@@ -345,41 +375,20 @@ def process_stream_face(url, sessionId):
                 processed_eye = processed_eye.transpose(2, 0, 1)
                 # 5. Add a batch dimension to obtain shape [1, 3, 32, 32].
                 processed_eye = processed_eye[None, ...]
+
                 # Run inference
                 eye_req.infer({0: processed_eye})
                 probs = eye_req.get_output_tensor().data[0]
-                prob_value = float(probs[0])  # Convert numpy value to float
-                # use standard threshold of EYE_MODEL_THRESHOLD
+                prob_value = float(probs[0])
+                # Use standard threshold to decide eye state
                 eye_state = "Open" if prob_value <= EYE_MODEL_THRESHOLD else "Closed"
                 classification = f"Eyes {eye_state}"
 
-                # get a meaningful probability value for prediction
+                # Map the probability to a value between 0 and 1 for logging/display
                 if prob_value <= EYE_MODEL_THRESHOLD:
-                    # Eye is Open
-                    final_classification_prob_value = 1.0 - (
-                        prob_value * 2
-                    )  # Maps [0.0, 0.5] to [1.0, 0.0]
+                    final_classification_prob_value = 1.0 - (prob_value * 2)
                 else:
-                    # Eye is Closed
-                    final_classification_prob_value = (
-                        prob_value - 0.5
-                    ) * 2  # Maps [0.5, 1.0] to [0.0, 1.0]
-
-                # log model inference time
-                model_time = (time.time() - model_start_time) * 1000
-                logger.debug(f"FACE_STREAM: OpenVINO inference took {model_time:.2f}ms")
-
-                # Draw eye rectangle and state
-                cv2.rectangle(roi_color, (ex, ey), (ex + ew, ey + eh), (0, 255, 0), 2)
-                cv2.putText(
-                    roi_color,
-                    f"{eye_type} {eye_state}",
-                    (ex, ey - 10),
-                    cv2.FONT_HERSHEY_SIMPLEX,
-                    0.6,
-                    (0, 255, 0),
-                    2,
-                )
+                    final_classification_prob_value = (prob_value - 0.5) * 2
 
                 logger.debug(
                     f"FACE_STREAM: {eye_type} eye classified as {eye_state} (prob: {prob_value:.2f})"
@@ -391,7 +400,7 @@ def process_stream_face(url, sessionId):
             f"FACE_STREAM: Frame {frame_count_face} processed in {frame_time:.2f}ms - Classification: {classification}"
         )
 
-        # Encode frame for streaming - always use frame_with_boxes
+        # Encode frame for streaming
         _, buffer = cv2.imencode(".jpg", frame_with_boxes)
         frame_base64 = base64.b64encode(buffer).decode("utf-8")
 
