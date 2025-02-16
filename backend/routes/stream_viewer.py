@@ -30,9 +30,9 @@ obd_data_buffer = Queue(maxsize=1)
 # Constants
 # If your FACE_STREAM_URL and BODY_STREAM_URL are the same, you will get errors!
 # FACE_STREAM_URL = "http://172.20.10.3/stream"  # ai thinker hotspot aaron
-FACE_STREAM_URL = "http://192.168.0.108/stream"  # wrover home wifi aaron
+FACE_STREAM_URL = "http://192.168.0.105/stream"  # ai thinker home wifi aaron
 # BODY_STREAM_URL = "http://172.20.10.8/stream"  # ai thinker hotspot aaron
-BODY_STREAM_URL = "http://192.168.0.105/stream"  # ai thinker home wifi aaron
+BODY_STREAM_URL = "http://192.168.0.108/stream"  # wrover home wifi aaron
 # Clip constants
 CLIP_MODEL_NAME = "ViT-L/14"
 CLIP_INPUT_SIZE = 224
@@ -93,7 +93,7 @@ body_stream_index_to_label = {
     0: "Drinking beverage",
     1: "Adjusting hair, glasses, or makeup",
     2: "Talking on phone",
-    3: "Adjusting Radio or AC",
+    3: "Adjusting Radio or AC",  # Could change to reaching to simplify and better performance
     4: "Reaching beside or behind",
     5: "Reaching beside or behind",
     6: "Driving Safely",
@@ -187,11 +187,6 @@ def compute_EAR(eye):
     return ear
 
 
-# Expect Open, Closed or Unknown as predictions on each frame
-# Paper talking about getting different drowsiness
-import numpy as np
-
-
 def compute_EAR(eye):
     # Compute the Euclidean distances between the vertical eye landmarks
     A = np.linalg.norm(eye[1] - eye[5])
@@ -205,59 +200,77 @@ def compute_EAR(eye):
 # Predictions are Eyes Open, Eyes Closed or Unknown
 # Used paper here https://pmc.ncbi.nlm.nih.gov/articles/PMC11398282/
 def process_stream_face(url, sessionId):
-    global frame_count_face, face_stream_data_buffer, face_thread_kill, face_frame_buffer_db, face_batch_start
+    global frame_count_face, face_stream_data_buffer, face_thread_kill
+    global face_frame_buffer_db, face_batch_start
 
     cap = cv2.VideoCapture(url)
-    cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)  # Limit buffer size for real-time streaming
+    cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
 
     while not face_thread_kill:
+        # Initialize timing variables for each frame
+        pipeline_start_time = time.time()
+        frame_capture_time = 0
+        face_detect_time = 0
+        dlib_time = 0
+        ear_time = 0
+        vis_time = 0
+        encoding_time = 0
+        db_time = 0
+
+        # Time frame capture
+        capture_start = time.time()
         success, frame = cap.read()
+        frame_capture_time = (time.time() - capture_start) * 1000
+
         if not success:
             logger.error(f"FACE_STREAM: Failed to read frame from {url}")
             time.sleep(0.1)
             continue
 
         frame_count_face += 1
-        frame_start_time = time.time()
 
-        # Convert to grayscale for detection and landmark prediction
+        # Time face detection
+        face_detect_start = time.time()
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-        faces = faceCascade.detectMultiScale(gray, 1.15, 2)
-        frame_with_boxes = frame.copy()
+        faces = faceCascade.detectMultiScale(gray, 1.3, 1)
+        face_detect_time = (time.time() - face_detect_start) * 1000
 
-        # Default prediction
+        frame_with_boxes = frame.copy()
         classification = "Unknown"
         ear_score = None
 
         if len(faces) > 0:
-            # Use the first detected face
-            fx, fy, fw, fh = faces[0]
+            # Find largest face
+            largest_face = max(faces, key=lambda face: face[2] * face[3])
+            fx, fy, fw, fh = largest_face
             cv2.rectangle(
                 frame_with_boxes, (fx, fy), (fx + fw, fy + fh), (255, 0, 0), 2
             )
-            # Define roi_color as the face region (for drawing purposes)
             roi_color = frame_with_boxes[fy : fy + fh, fx : fx + fw]
 
-            # Create a dlib rectangle using absolute face coordinates
+            # Time dlib feature extraction
+            dlib_start = time.time()
             dlib_rect = dlib.rectangle(int(fx), int(fy), int(fx + fw), int(fy + fh))
-            # Get the facial landmarks
             shape = landmark_predictor(gray, dlib_rect)
             shape_np = face_utils.shape_to_np(shape)
+            dlib_time = (time.time() - dlib_start) * 1000
 
-            # Extract landmarks for both eyes
+            # Time eye landmark extraction and EAR calculation
+            ear_start = time.time()
             left_eye_pts = shape_np[36:42]
             right_eye_pts = shape_np[42:48]
 
-            # Draw all eye landmarks for debugging (both eyes)
+            # Draw landmarks
             for x, y in np.concatenate((left_eye_pts, right_eye_pts)):
                 cv2.circle(frame_with_boxes, (x, y), 1, (0, 0, 255), -1)
 
-            # Compute the EAR for both eyes and average them
             left_ear = compute_EAR(left_eye_pts)
             right_ear = compute_EAR(right_eye_pts)
             avg_ear = (left_ear + right_ear) / 2.0
+            ear_time = (time.time() - ear_start) * 1000
 
-            # Classify eye state based on average EAR threshold
+            # Classification and visualization
+            vis_start = time.time()
             if avg_ear > 0.25:
                 eye_state = "Open"
             else:
@@ -265,15 +278,12 @@ def process_stream_face(url, sessionId):
             classification = f"Eyes {eye_state}"
             ear_score = avg_ear
 
-            # Optionally, draw bounding boxes around both eyes for visualization
             (lex, ley, lew, leh) = cv2.boundingRect(left_eye_pts)
             (rex, rey, rew, reh) = cv2.boundingRect(right_eye_pts)
-            # Convert absolute coordinates to relative ones for drawing on roi_color
-            rel_lex = lex - fx
-            rel_ley = ley - fy
-            rel_rex = rex - fx
-            rel_rey = rey - fy
+            rel_lex, rel_ley = lex - fx, ley - fy
+            rel_rex, rel_rey = rex - fx, rey - fy
 
+            # Draw eye boxes and text
             cv2.rectangle(
                 roi_color,
                 (rel_lex, rel_ley),
@@ -297,24 +307,51 @@ def process_stream_face(url, sessionId):
                 (0, 255, 0),
                 2,
             )
+            vis_time = (time.time() - vis_start) * 1000
 
-        # Log processing time
-        frame_time = (time.time() - frame_start_time) * 1000
-        logger.info(
-            f"FACE_STREAM: Frame {frame_count_face} processed in {frame_time:.2f}ms - Classification: {classification}"
-        )
-
-        # Encode frame for streaming
+        # Time frame encoding
+        encode_start = time.time()
         _, buffer = cv2.imencode(".jpg", frame_with_boxes)
         frame_base64 = base64.b64encode(buffer).decode("utf-8")
+        encoding_time = (time.time() - encode_start) * 1000
 
-        # Firestore DB save
+        # Time database operations if needed
+        db_start = time.time()
         if len(face_frame_buffer_db) == 0:
             face_batch_start = int(time.time())
         if len(face_frame_buffer_db) < NUM_FRAMES_BEFORE_STORE_IN_DB:
             face_frame_buffer_db.append(classification)
         if len(face_frame_buffer_db) >= NUM_FRAMES_BEFORE_STORE_IN_DB:
             save_face_frames_to_firestore(sessionId)
+        db_time = (time.time() - db_start) * 1000
+
+        # Calculate total pipeline time
+        total_time = (time.time() - pipeline_start_time) * 1000
+
+        # Log comprehensive timing breakdown
+        timing_log = (
+            f"FACE_STREAM: Frame {frame_count_face} complete pipeline breakdown:\n"
+            f"  - Frame Capture: {frame_capture_time:.2f}ms\n"
+            f"  - Face Detection: {face_detect_time:.2f}ms\n"
+        )
+
+        if len(faces) > 0:
+            timing_log += (
+                f"  - Dlib Landmarks: {dlib_time:.2f}ms\n"
+                f"  - EAR Calculation: {ear_time:.2f}ms\n"
+                f"  - Visualization: {vis_time:.2f}ms\n"
+                f"  - Face Size: {fw * fh} pixels\n"
+                f"  - EAR Score: {ear_score:.3f}\n"
+            )
+
+        timing_log += (
+            f"  - Frame Encoding: {encoding_time:.2f}ms\n"
+            f"  - Database Operations: {db_time:.2f}ms\n"
+            f"  - Total Pipeline Time: {total_time:.2f}ms\n"
+            f"  - Classification: {classification}"
+        )
+
+        logger.info(timing_log)
 
         # Stream output
         if face_stream_data_buffer.full():
@@ -326,6 +363,7 @@ def process_stream_face(url, sessionId):
                 "ear_score": ear_score,
                 "frame_number": frame_count_face,
                 "timestamp": int(time.time()),
+                "processing_time": total_time,
             }
         )
 
@@ -342,90 +380,70 @@ def preprocess_frame_clip(frame, preprocess):
 
 
 # Body stream helper function
-# Detect a person in frame so we return unknown if there is no person detected
+# Detect a person in frame so we predict Unknown if there is no person detected rather
+# than confidently predicting safe driving when there is noone in the frame
 # This needs to be extremely fast as it will be called every frame
-def detect_person_in_frame(frame, isFaceStream, scale_factor=1.2, min_neighbors=1):
+def detect_person_in_frame(frame, scale_factor=1.2, min_neighbors=1):
     start_time = time.time()
     gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
 
-    if isFaceStream:
-        # Face stream order: frontal face -> upper body -> profile face
-        faces = faceCascade.detectMultiScale(
-            gray, scaleFactor=scale_factor, minNeighbors=min_neighbors
-        )
-        if len(faces) > 0:
-            detection_time = (time.time() - start_time) * 1000
-            logger.info(
-                f"FACE_STREAM: Person detection completed in {detection_time:.2f}ms (frontal face detected)"
-            )
-            return True
-
-        upper_bodies = upperBodyCascade.detectMultiScale(
-            gray, scaleFactor=scale_factor, minNeighbors=min_neighbors
-        )
-        if len(upper_bodies) > 0:
-            detection_time = (time.time() - start_time) * 1000
-            logger.info(
-                f"FACE_STREAM: Person detection completed in {detection_time:.2f}ms (upper body detected)"
-            )
-            return True
-
-        profile_faces = profileFaceCascade.detectMultiScale(
-            gray, scaleFactor=scale_factor, minNeighbors=min_neighbors
-        )
+    # Body stream order: profile face -> upper body -> frontal face
+    profile_faces = profileFaceCascade.detectMultiScale(
+        gray, scaleFactor=scale_factor, minNeighbors=min_neighbors
+    )
+    if len(profile_faces) > 0:
         detection_time = (time.time() - start_time) * 1000
         logger.info(
-            f"FACE_STREAM: Person detection completed in {detection_time:.2f}ms (Person {'detected' if len(profile_faces) > 0 else 'not detected'})"
+            f"BODY_STREAM: Person detection completed in {detection_time:.2f}ms (profile face detected)"
         )
-        return len(profile_faces) > 0
+        return True
 
-    else:
-        # Body stream order: profile face -> upper body -> frontal face
-        profile_faces = profileFaceCascade.detectMultiScale(
-            gray, scaleFactor=scale_factor, minNeighbors=min_neighbors
-        )
-        if len(profile_faces) > 0:
-            detection_time = (time.time() - start_time) * 1000
-            logger.info(
-                f"BODY_STREAM: Person detection completed in {detection_time:.2f}ms (profile face detected)"
-            )
-            return True
-
-        upper_bodies = upperBodyCascade.detectMultiScale(
-            gray, scaleFactor=scale_factor, minNeighbors=min_neighbors
-        )
-        if len(upper_bodies) > 0:
-            detection_time = (time.time() - start_time) * 1000
-            logger.info(
-                f"BODY_STREAM: Person detection completed in {detection_time:.2f}ms (upper body detected)"
-            )
-            return True
-
-        faces = faceCascade.detectMultiScale(
-            gray, scaleFactor=scale_factor, minNeighbors=min_neighbors
-        )
+    upper_bodies = upperBodyCascade.detectMultiScale(
+        gray, scaleFactor=scale_factor, minNeighbors=min_neighbors
+    )
+    if len(upper_bodies) > 0:
         detection_time = (time.time() - start_time) * 1000
         logger.info(
-            f"BODY_STREAM: Person detection completed in {detection_time:.2f}ms (Person {'detected' if len(faces) > 0 else 'not detected'})"
+            f"BODY_STREAM: Person detection completed in {detection_time:.2f}ms (upper body detected)"
         )
-        return len(faces) > 0
+        return True
+
+    faces = faceCascade.detectMultiScale(
+        gray, scaleFactor=scale_factor, minNeighbors=min_neighbors
+    )
+    detection_time = (time.time() - start_time) * 1000
+    logger.info(
+        f"BODY_STREAM: Person detection completed in {detection_time:.2f}ms (Person {'detected' if len(faces) > 0 else 'not detected'})"
+    )
+    return len(faces) > 0
 
 
 # Expect body_stream_index_to_label classifications and Unknown as predictions on each frame
 def process_stream_body(url, sessionId):
-    global frame_count_body, clip_model, clip_preprocess, clip_classifier_body, body_batch_start, body_stream_data_buffer, body_frame_buffer_db, body_thread_kill
+    global frame_count_body, clip_model, clip_preprocess, clip_classifier_body, body_batch_start
+    global body_stream_data_buffer, body_frame_buffer_db, body_thread_kill
 
     if not all([clip_model, clip_preprocess, clip_classifier_body]):
         logger.error("BODY_STREAM: CLIP components not initialized")
         return
 
     cap = cv2.VideoCapture(url)
-    cap.set(
-        cv2.CAP_PROP_BUFFERSIZE, 1
-    )  # limit buffer size to make stream more real-time
+    cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
 
     while not body_thread_kill:
+        # Initialize timing variables
+        pipeline_start_time = time.time()
+        frame_capture_time = 0
+        preprocess_time = 0
+        feature_extraction_time = 0
+        prediction_time = 0
+        encoding_time = 0
+        db_time = 0
+
+        # Time frame capture
+        capture_start = time.time()
         success, frame = cap.read()
+        frame_capture_time = (time.time() - capture_start) * 1000
 
         if not success:
             logger.error(f"BODY_STREAM: Failed to read frame from {url}")
@@ -435,53 +453,87 @@ def process_stream_body(url, sessionId):
         frame_count_body += 1
         prediction = None
         prob_score = None
-        prediction_label = "Unknown"  # Initialize at start of loop
+        prediction_label = "Unknown"
 
-        # person_detected = detect_person_in_frame(frame, False)
         person_detected = True  # Not using person detection for now
 
         if person_detected:
             try:
-                prediction_start_time = time.time()
+                # Time preprocessing
+                preprocess_start = time.time()
+                processed = preprocess_frame_clip(frame, clip_preprocess).to(device)
+                preprocess_time = (time.time() - preprocess_start) * 1000
+
+                # Time feature extraction
+                feature_start = time.time()
                 with torch.no_grad():
-                    processed = preprocess_frame_clip(frame, clip_preprocess).to(device)
                     features = clip_model.encode_image(processed)
                     features = features.cpu().numpy()
+                feature_extraction_time = (time.time() - feature_start) * 1000
 
-                    prediction = int(clip_classifier_body.predict(features)[0])
-                    prob_score = clip_classifier_body.predict_proba(features)[0][
-                        prediction
-                    ]
-                    prediction_label = body_stream_index_to_label.get(
-                        prediction, "Unknown"
-                    )
+                # Time prediction
+                prediction_start = time.time()
+                prediction = int(clip_classifier_body.predict(features)[0])
+                prob_score = clip_classifier_body.predict_proba(features)[0][prediction]
+                prediction_label = body_stream_index_to_label.get(prediction, "Unknown")
+                prediction_time = (time.time() - prediction_start) * 1000
 
-                prediction_time = (time.time() - prediction_start_time) * 1000
-                logger.info(
-                    f"BODY_STREAM: Frame {frame_count_body}: Processing time={prediction_time:.2f}ms, Prediction={prediction_label}, Probability={prob_score}"
+                # Time frame encoding
+                encode_start = time.time()
+                _, buffer = cv2.imencode(".jpg", frame)
+                frame_base64 = base64.b64encode(buffer).decode("utf-8")
+                encoding_time = (time.time() - encode_start) * 1000
+
+                # Time database operations
+                db_start = time.time()
+                if len(body_frame_buffer_db) == 0:
+                    body_batch_start = int(time.time())
+                if len(body_frame_buffer_db) < NUM_FRAMES_BEFORE_STORE_IN_DB:
+                    body_frame_buffer_db.append(prediction_label)
+                if len(body_frame_buffer_db) >= NUM_FRAMES_BEFORE_STORE_IN_DB:
+                    save_body_frames_to_firestore(sessionId)
+                db_time = (time.time() - db_start) * 1000
+
+                # Calculate total pipeline time and log all metrics
+                total_time = (time.time() - pipeline_start_time) * 1000
+
+                # Comprehensive timing breakdown
+                timing_log = (
+                    f"BODY_STREAM: Frame {frame_count_body} complete pipeline breakdown:\n"
+                    f"  - Frame Capture: {frame_capture_time:.2f}ms\n"
+                    f"  - Preprocessing: {preprocess_time:.2f}ms\n"
+                    f"  - Feature Extraction: {feature_extraction_time:.2f}ms\n"
+                    f"  - Model Prediction: {prediction_time:.2f}ms\n"
+                    f"  - Frame Encoding: {encoding_time:.2f}ms\n"
+                    f"  - Database Operations: {db_time:.2f}ms\n"
+                    f"  - Total Pipeline Time: {total_time:.2f}ms\n"
+                    f"  - Prediction: {prediction_label}\n"
+                    f"  - Probability: {prob_score:.3f}"
                 )
+                logger.info(timing_log)
 
             except Exception as e:
                 logger.error(f"BODY_STREAM: Error in inference: {str(e)}")
                 prediction_label = "Unknown"
                 prob_score = None
         else:
+            # Time frame encoding for failed detection case
+            encode_start = time.time()
+            _, buffer = cv2.imencode(".jpg", frame)
+            frame_base64 = base64.b64encode(buffer).decode("utf-8")
+            encoding_time = (time.time() - encode_start) * 1000
+
+            # Calculate and log total time for failed detection
+            total_time = (time.time() - pipeline_start_time) * 1000
             logger.info(
-                f"BODY_STREAM: Frame {frame_count_body}: No person detected, prediction set to Unknown"
+                f"BODY_STREAM: Frame {frame_count_body} pipeline breakdown (no person):\n"
+                f"  - Frame Capture: {frame_capture_time:.2f}ms\n"
+                f"  - Frame Encoding: {encoding_time:.2f}ms\n"
+                f"  - Total Time: {total_time:.2f}ms\n"
+                f"  - Prediction: Unknown (No person detected)"
             )
 
-        # Firestore DB save
-        if len(body_frame_buffer_db) == 0:
-            body_batch_start = int(time.time())
-        if len(body_frame_buffer_db) < NUM_FRAMES_BEFORE_STORE_IN_DB:
-            body_frame_buffer_db.append(prediction_label)
-        if len(body_frame_buffer_db) >= NUM_FRAMES_BEFORE_STORE_IN_DB:
-            save_body_frames_to_firestore(sessionId)
-
-        # Encode frame for streaming
-        _, buffer = cv2.imencode(".jpg", frame)
-        frame_base64 = base64.b64encode(buffer).decode("utf-8")
-
+        # Stream output
         if body_stream_data_buffer.full():
             body_stream_data_buffer.get_nowait()
         body_stream_data_buffer.put(
@@ -491,6 +543,7 @@ def process_stream_body(url, sessionId):
                 "probability": prob_score,
                 "frame_number": frame_count_body,
                 "timestamp": int(time.time()),
+                "processing_time": total_time,
             }
         )
 

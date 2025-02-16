@@ -4,6 +4,7 @@ export interface ServerResponse {
     probability: string;
     frame_number: string;
     timestamp: string;
+    processing_time: string;
 }
   
 export interface LiveFrame {
@@ -11,6 +12,7 @@ export interface LiveFrame {
     probability: number;
     frameNum: number;
     timestamp: number;
+    processing_time: number;
     camera: 'Face' | 'Body';
 }
 

@@ -4,6 +4,7 @@ export interface ServerResponse {
     ear_score: string;
     frame_number: string;
     timestamp: string;
+    processing_time: string;
 }
   
 export interface LiveFrame {
@@ -11,6 +12,7 @@ export interface LiveFrame {
     ear_score: number;
     frameNum: number;
     timestamp: number;
+    processing_time: number;
     camera: 'Face' | 'Body';
 }
 

@@ -26,6 +26,7 @@ export default function BodyDemo() {
         probability: parseFloat(data.probability),
         frameNum: parseInt(data.frame_number),
         timestamp: parseInt(data.timestamp),
+        processing_time: data.processing_time,
         camera: "Body",
       });
     };
@@ -75,6 +76,10 @@ export default function BodyDemo() {
               <Divider orientation="vertical" flexItem />
               <Typography textAlign="center" width={150}>
                 {`Timestamp ${prediction.timestamp}`}
+              </Typography>
+              <Divider orientation="vertical" flexItem />
+              <Typography textAlign="center" width={150}>
+                {prediction.processing_time.toFixed(2)}
               </Typography>
               <Divider orientation="vertical" flexItem />
               <Typography textAlign="center" width={150}>

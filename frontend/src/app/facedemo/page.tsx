@@ -23,9 +23,10 @@ export default function FaceDemo() {
 
       addLivePrediction({
         value: data.prediction,
-        earScore: parseFloat(data.ear_score),
+        ear_score: parseFloat(data.ear_score),
         frameNum: parseInt(data.frame_number),
         timestamp: parseInt(data.timestamp),
+        processing_time: parseFloat(data.processing_time),
         camera: "Face",
       });
     };
@@ -78,11 +79,15 @@ export default function FaceDemo() {
               </Typography>
               <Divider orientation="vertical" flexItem />
               <Typography textAlign="center" width={150}>
+                {prediction.processing_time.toFixed(2)}
+              </Typography>
+              <Divider orientation="vertical" flexItem />
+              <Typography textAlign="center" width={150}>
                 {prediction.value}
               </Typography>
               <Divider orientation="vertical" flexItem />
               <Typography textAlign="center" width={150}>
-                {`${(prediction.earScore).toFixed(2)}`}
+                {`${(prediction.ear_score).toFixed(2)}`}
               </Typography>
             </Box>
           ))}
