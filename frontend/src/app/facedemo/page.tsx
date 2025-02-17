@@ -70,18 +70,12 @@ export default function FaceDemo() {
           <Typography variant="h5" textAlign={"center"} fontWeight={500}>
             Live Frame Classification
           </Typography>
-          {livePredictStream.map((prediction, index) => (
+          {livePredictStream
+            .filter(prediction => prediction.eye_prediction && prediction.mouth_prediction)
+            .map((prediction, index) => (
             <Box key={index} className={styles.liveClasBox}>
               <Typography textAlign="center" width={150}>
-                {`Frame #${prediction.frameNum}`}
-              </Typography>
-              <Divider orientation="vertical" flexItem />
-              <Typography textAlign="center" width={150}>
                 {`Timestamp ${prediction.timestamp}`}
-              </Typography>
-              <Divider orientation="vertical" flexItem />
-              <Typography textAlign="center" width={150}>
-                {`Processing Time ${prediction.processing_time.toFixed(2)}`}
               </Typography>
               <Divider orientation="vertical" flexItem />
               <Typography textAlign="center" width={150}>
@@ -89,15 +83,7 @@ export default function FaceDemo() {
               </Typography>
               <Divider orientation="vertical" flexItem />
               <Typography textAlign="center" width={150}>
-                {`EAR Score: ${(prediction.ear_score).toFixed(2)}`}
-              </Typography>
-              <Divider orientation="vertical" flexItem />
-              <Typography textAlign="center" width={150}>
                 {`Mouth Prediction: ${prediction.mouth_prediction}`}
-              </Typography>
-              <Divider orientation="vertical" flexItem />
-              <Typography textAlign="center" width={150}>
-                {`MAR Score: ${(prediction.mar_score).toFixed(2)}`}
               </Typography>
             </Box>
           ))}

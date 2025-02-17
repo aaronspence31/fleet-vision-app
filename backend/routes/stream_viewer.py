@@ -13,7 +13,9 @@ import numpy as np
 import queue
 from PIL import Image
 from queue import Queue
+from collections import Counter
 from firestore import body_drive_sessions, face_drive_sessions
+from firebase_admin import firestore
 from flask import Blueprint, Response, make_response, request
 import dlib
 from imutils import face_utils  # Helps convert dlib shapes to NumPy arrays
@@ -68,7 +70,7 @@ landmark_predictor = dlib.shape_predictor(
 )
 
 # WHY BUFFER RATHER THAN JUST SAVING TO FIRESTORE IMMEDIATELY?
-NUM_FRAMES_BEFORE_STORE_IN_DB = 60
+NUM_SECONDS_BEFORE_STORE_IN_DB = 30
 frame_count_face = 0
 face_frame_buffer_db = []
 face_processing_thread = None
@@ -83,6 +85,10 @@ body_thread_kill = False
 # these queues must be thread safe as they are accessed by multiple threads
 face_stream_data_buffer = Queue(maxsize=1)
 body_stream_data_buffer = Queue(maxsize=1)
+
+# These buffers will hold the predictions data for the current second
+face_stream_cursecond_buffer = []
+body_stream_cursecond_buffer = []
 
 # Add global variables for clip model
 clip_model = None
@@ -124,61 +130,110 @@ except Exception as e:
 
 
 # Face stream helper function
+# Each second classification will be stored in the format below
+# face_drive_sessions/<sessionId>/face_drive_session_classifications/<timestamp>
+# there will be a eye_classification and mouth_classification field with the final classification for that second
 def save_face_frames_to_firestore(sessionId):
-    global face_batch_start, face_frame_buffer_db
+    """
+    Saves classification data to Firestore under a document named after sessionId
+    in the 'face_drive_sessions' collection. If the session doc does not exist, it is created.
+    Otherwise, we update the existing doc with new timestamped classifications.
+    """
+    global face_frame_buffer_db
 
-    if len(face_frame_buffer_db) >= NUM_FRAMES_BEFORE_STORE_IN_DB:
+    if len(face_frame_buffer_db) >= NUM_SECONDS_BEFORE_STORE_IN_DB:
         logger.info("FACE_STREAM: Saving face frames to Firestore")
+
+        # Copy the buffer so we don't mutate it while writing
         frame_data = list(face_frame_buffer_db)
 
-        # Create a session document
-        session_data = {
-            "timestamp_start": face_batch_start,
-            "timestamp_end": int(time.time()),
-            "frame_count": len(frame_data),
-            "frames": frame_data,
-            "session_id": str(sessionId),
-        }
+        # 1) Create or retrieve the doc for this session ID
+        doc_ref = face_drive_sessions.document(str(sessionId))
+        doc_snapshot = doc_ref.get()
 
-        # Time the Firestore operation
+        if not doc_snapshot.exists:
+            # If doc does not exist, create it
+            doc_ref.set(
+                {"session_id": str(sessionId), "created_at": firestore.SERVER_TIMESTAMP}
+            )
+            logger.info(
+                f"FACE_STREAM: Created new session doc for session ID {sessionId}"
+            )
+
+        # 2) Write each (timestamp, classification) as a doc in 'face_drive_session_classifications'
         db_start_time = time.time()
-        face_drive_sessions.add(session_data)
-        db_time = (time.time() - db_start_time) * 1000  # Convert to milliseconds
 
+        for record in frame_data:
+            ts = record["timestamp"]  # integer second or unique timestamp
+            eye_label = record["eye_classification"]  # eye classification
+            mouth_label = record["mouth_classification"]  # eye classification
+
+            # Document ID = timestamp; store both timestamp and classification
+            doc_ref.collection("face_drive_session_classifications").document(
+                str(ts)
+            ).set(
+                {
+                    "timestamp": ts,
+                    "eye_classification": eye_label,
+                    "mouth_classification": mouth_label,
+                }
+            )
+
+        db_time = (time.time() - db_start_time) * 1000  # milliseconds
         logger.info(f"FACE_STREAM: Database save completed in {db_time:.2f}ms")
 
-        # Clear the buffer
+        # 3) Clear the local buffer and reset
         face_frame_buffer_db = []
-        face_batch_start = None
 
 
 # Body stream helper function
+# Each second classification will be stored in the format below
+# body_drive_sessions/<sessionId>/body_drive_session_classifications/<timestamp>
+# there will be a single classification field with the final classification for that second
 def save_body_frames_to_firestore(sessionId):
-    global body_batch_start, body_frame_buffer_db
+    """
+    Saves classification data to Firestore under a document named after sessionId
+    in the 'body_drive_sessions' collection. If the session doc does not exist, it is created.
+    Otherwise, we update the existing doc with new timestamped classifications.
+    """
+    global body_frame_buffer_db
 
-    if len(body_frame_buffer_db) >= NUM_FRAMES_BEFORE_STORE_IN_DB:
+    if len(body_frame_buffer_db) >= NUM_SECONDS_BEFORE_STORE_IN_DB:
         logger.info("BODY_STREAM: Saving body frames to Firestore")
+
+        # Copy the buffer so we don't mutate it while writing
         frame_data = list(body_frame_buffer_db)
 
-        # Create a session document
-        session_data = {
-            "timestamp_start": body_batch_start,
-            "timestamp_end": int(time.time()),
-            "frame_count": len(frame_data),
-            "frames": frame_data,
-            "session_id": str(sessionId),
-        }
+        # 1) Create or retrieve the doc for this session ID
+        doc_ref = body_drive_sessions.document(str(sessionId))
+        doc_snapshot = doc_ref.get()
 
-        # Time the Firestore operation
+        if not doc_snapshot.exists:
+            # If doc does not exist, create it
+            doc_ref.set(
+                {"session_id": str(sessionId), "created_at": firestore.SERVER_TIMESTAMP}
+            )
+            logger.info(
+                f"BODY_STREAM: Created new session doc for session ID {sessionId}"
+            )
+
+        # 2) Write each (timestamp, classification) as a doc in 'body_drive_session_classifications'
         db_start_time = time.time()
-        body_drive_sessions.add(session_data)
-        db_time = (time.time() - db_start_time) * 1000  # Convert to milliseconds
 
+        for record in frame_data:
+            ts = record["timestamp"]  # integer second or unique timestamp
+            label = record["classification"]  # your final classification
+
+            # Document ID = timestamp; store both timestamp and classification
+            doc_ref.collection("body_drive_session_classifications").document(
+                str(ts)
+            ).set({"timestamp": ts, "classification": label})
+
+        db_time = (time.time() - db_start_time) * 1000  # milliseconds
         logger.info(f"BODY_STREAM: Database save completed in {db_time:.2f}ms")
 
-        # Clear the buffer
+        # 3) Clear the local buffer and reset
         body_frame_buffer_db = []
-        body_batch_start = None
 
 
 # Face stream helper function to compute Eye Aspect Ratio (EAR)
@@ -207,15 +262,20 @@ def compute_MAR(mouth):
 # Used paper here https://pmc.ncbi.nlm.nih.gov/articles/PMC11398282/
 def process_stream_face(url, sessionId):
     global frame_count_face, face_stream_data_buffer, face_thread_kill
-    global face_frame_buffer_db, face_batch_start
+    global face_frame_buffer_db, face_stream_cursecond_buffer
 
     cap = cv2.VideoCapture(url)
     cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
 
+    from collections import Counter
+
+    # Track "last second" for per-second majority
+    last_second = None
+
     while not face_thread_kill:
         pipeline_start_time = time.time()
 
-        # Initialize timing variables for each frame
+        # Initialize timing variables
         frame_capture_time = 0
         face_detect_time = 0
         dlib_time = 0
@@ -224,7 +284,70 @@ def process_stream_face(url, sessionId):
         encoding_time = 0
         db_time = 0
 
-        # 1. Capture frame
+        # 1) Determine the current integer second
+        now_second = int(time.time())
+
+        # 2) If we have moved to a new second, finalize the previous second
+        if last_second is not None and now_second != last_second:
+            if len(face_stream_cursecond_buffer) > 0:
+                # We have accumulated eye/mouth classifications for the old second in face_stream_cursecond_buffer
+                eye_labels = [item["eye"] for item in face_stream_cursecond_buffer]
+                mouth_labels = [item["mouth"] for item in face_stream_cursecond_buffer]
+
+                # Majority vote for eye
+                eye_counts = Counter(eye_labels)
+                majority_eye, _ = eye_counts.most_common(1)[0]
+
+                # Majority vote for mouth
+                mouth_counts = Counter(mouth_labels)
+                majority_mouth, _ = mouth_counts.most_common(1)[0]
+
+                # Build a record for DB
+                record = {
+                    "timestamp": last_second,  # integer second
+                    "eye_classification": majority_eye,
+                    "mouth_classification": majority_mouth,
+                }
+
+                # Store to the DB buffer
+                if len(face_frame_buffer_db) < NUM_SECONDS_BEFORE_STORE_IN_DB:
+                    face_frame_buffer_db.append(record)
+                if len(face_frame_buffer_db) >= NUM_SECONDS_BEFORE_STORE_IN_DB:
+                    save_face_frames_to_firestore(sessionId)
+
+                # Optionally push a “final” entry to the front-end with the aggregated classification
+                # and a representative image. We do the same approach as the body stream: pop one item
+                # from the queue if it is full, so we can reuse that item’s image.
+                current_entry = None
+                if face_stream_data_buffer.full():
+                    current_entry = face_stream_data_buffer.get_nowait()
+
+                # If we got something, use its image; otherwise None
+                final_image = current_entry.get("image") if current_entry else None
+
+                face_stream_data_buffer.put(
+                    {
+                        "image": final_image,
+                        "eye_prediction": majority_eye,
+                        "mouth_prediction": majority_mouth,
+                        "ear_score": None,  # or best guess from aggregator if you like
+                        "mar_score": None,
+                        "frame_number": None,
+                        "timestamp": last_second,
+                        "processing_time": None,
+                    }
+                )
+
+                # Clear the buffer for the old second
+                face_stream_cursecond_buffer.clear()
+
+        # 3) Update last_second
+        if last_second is None:
+            last_second = now_second
+        elif now_second != last_second:
+            last_second = now_second
+
+        # 4) Capture frame
         capture_start = time.time()
         success, frame = cap.read()
         frame_capture_time = (time.time() - capture_start) * 1000
@@ -236,7 +359,13 @@ def process_stream_face(url, sessionId):
 
         frame_count_face += 1
 
-        # 2. Detect face
+        # Default
+        eye_classification = "Unknown"
+        mouth_classification = "Unknown"
+        ear_score = None
+        mar_score = None
+
+        # 5) Detect face(s)
         face_detect_start = time.time()
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
         faces = faceCascade.detectMultiScale(gray, 1.3, 1)
@@ -244,63 +373,48 @@ def process_stream_face(url, sessionId):
 
         frame_with_boxes = frame.copy()
 
-        # Default classifications if no face is found
-        eye_classification = "Unknown"
-        mouth_classification = "Unknown"
-        ear_score = None
-        mar_score = None
-
-        # If no face is found, draw Unknown in orange at top right
+        # If no face, we draw "Unknown"
         if len(faces) == 0:
             font = cv2.FONT_HERSHEY_SIMPLEX
             font_scale = 0.8
             thickness = 2
             text_to_draw = "Unknown"
-
             (text_width, text_height), baseline = cv2.getTextSize(
                 text_to_draw, font, font_scale, thickness
             )
-
             padding = 10
             text_x = frame_with_boxes.shape[1] - text_width - padding
             text_y = text_height + padding
-
             cv2.putText(
                 frame_with_boxes,
                 text_to_draw,
                 (text_x, text_y),
                 font,
                 font_scale,
-                (0, 165, 255),  # Orange in BGR
+                (0, 165, 255),  # Orange
                 thickness,
             )
-
-        # Process the largest face if present
-        if len(faces) > 0:
-            # Find the largest face
+        else:
+            # Find largest face
             largest_face = max(faces, key=lambda face: face[2] * face[3])
             fx, fy, fw, fh = largest_face
             cv2.rectangle(
                 frame_with_boxes, (fx, fy), (fx + fw, fy + fh), (255, 0, 0), 2
             )
 
-            # 3. Landmark detection with dlib
+            # 6) Landmark detection (eyes, mouth, etc.)
             dlib_start = time.time()
             dlib_rect = dlib.rectangle(int(fx), int(fy), int(fx + fw), int(fy + fh))
             shape = landmark_predictor(gray, dlib_rect)
             shape_np = face_utils.shape_to_np(shape)
             dlib_time = (time.time() - dlib_start) * 1000
 
-            # 4. Eye Aspect Ratio (EAR)
+            # Eye Aspect Ratio
             ear_start = time.time()
-            left_eye_pts = shape_np[36:42]  # 6 points for left eye
-            right_eye_pts = shape_np[42:48]  # 6 points for right eye
-
-            # Draw eye landmarks (circles)
+            left_eye_pts = shape_np[36:42]
+            right_eye_pts = shape_np[42:48]
             for x, y in np.concatenate((left_eye_pts, right_eye_pts)):
                 cv2.circle(frame_with_boxes, (x, y), 1, (255, 255, 0), -1)
-
-            # Compute EAR
             left_ear = compute_EAR(left_eye_pts)
             right_ear = compute_EAR(right_eye_pts)
             avg_ear = (left_ear + right_ear) / 2.0
@@ -310,15 +424,13 @@ def process_stream_face(url, sessionId):
             )
             ear_time = (time.time() - ear_start) * 1000
 
-            # Draw bounding box around both eyes with color based on state
+            # Draw bounding box around eyes
             eyes_pts = np.concatenate((left_eye_pts, right_eye_pts))
             (ex, ey, ew, eh) = cv2.boundingRect(eyes_pts)
             eye_color = (
                 (0, 255, 0) if eye_classification == "Eyes Open" else (0, 0, 255)
             )
             cv2.rectangle(frame_with_boxes, (ex, ey), (ex + ew, ey + eh), eye_color, 2)
-
-            # Draw eye classification with EAR score
             eye_text = f"{eye_classification} ({ear_score:.2f})"
             cv2.putText(
                 frame_with_boxes,
@@ -330,28 +442,25 @@ def process_stream_face(url, sessionId):
                 2,
             )
 
-            # 5. Mouth Aspect Ratio (MAR)
+            # Mouth Aspect Ratio
             mar_start = time.time()
-            mouth_8_pts = shape_np[60:68]  # p1..p8
-            mar_score = compute_MAR(mouth_8_pts)
+            mouth_pts = shape_np[60:68]
+            mar_score = compute_MAR(mouth_pts)
             mouth_classification = (
                 "Mouth Open" if mar_score > MAR_THRESHOLD else "Mouth Closed"
             )
             mar_time = (time.time() - mar_start) * 1000
 
-            # Draw mouth landmarks and box with color based on state
-            outer_mouth_pts = shape_np[60:68]
-            for mx, my in outer_mouth_pts:
+            # Draw mouth landmarks
+            for mx, my in mouth_pts:
                 cv2.circle(frame_with_boxes, (mx, my), 1, (255, 255, 0), -1)
-            (mx, my, mw, mh) = cv2.boundingRect(outer_mouth_pts)
+            (mx, my, mw, mh) = cv2.boundingRect(mouth_pts)
             mouth_color = (
                 (0, 255, 0) if mouth_classification == "Mouth Closed" else (0, 0, 255)
             )
             cv2.rectangle(
                 frame_with_boxes, (mx, my), (mx + mw, my + mh), mouth_color, 2
             )
-
-            # Draw mouth classification with MAR score
             mouth_text = f"{mouth_classification} ({mar_score:.2f})"
             cv2.putText(
                 frame_with_boxes,
@@ -363,26 +472,46 @@ def process_stream_face(url, sessionId):
                 2,
             )
 
-        # 6. Encode the frame for streaming
+        # 7) Encode frame for streaming
         encode_start = time.time()
         _, buffer = cv2.imencode(".jpg", frame_with_boxes)
         frame_base64 = base64.b64encode(buffer).decode("utf-8")
         encoding_time = (time.time() - encode_start) * 1000
 
-        # 7. Database operations (batching logic)
-        db_start = time.time()
-        if len(face_frame_buffer_db) == 0:
-            face_batch_start = int(time.time())
-        if len(face_frame_buffer_db) < NUM_FRAMES_BEFORE_STORE_IN_DB:
-            face_frame_buffer_db.append(f"{eye_classification}, {mouth_classification}")
-        if len(face_frame_buffer_db) >= NUM_FRAMES_BEFORE_STORE_IN_DB:
-            save_face_frames_to_firestore(sessionId)
-        db_time = (time.time() - db_start) * 1000
+        # 8) Store the immediate (eye, mouth) classification for majority voting
+        #    but do NOT push the final classification to the front-end yet.
+        face_stream_cursecond_buffer.append(
+            {
+                "eye": eye_classification,
+                "mouth": mouth_classification,
+            }
+        )
+
+        # 9) Put partial entry to the queue with classification = None
+        #    so the front-end sees the live image, but no final classification.
+        if face_stream_data_buffer.full():
+            face_stream_data_buffer.get_nowait()
+
         total_time = (time.time() - pipeline_start_time) * 1000
 
-        # 8. Log timing breakdown and classification details
+        face_stream_data_buffer.put(
+            {
+                "image": frame_base64,
+                "eye_prediction": None,  # hide classification until second ends
+                "mouth_prediction": None,  # hide classification
+                "ear_score": ear_score,  # optional to show or hide
+                "mar_score": mar_score,
+                "frame_number": frame_count_face,
+                "timestamp": now_second,
+                "processing_time": total_time,
+            }
+        )
+
+        # Log timing
+        # (We've removed the direct DB logic from each frame,
+        #  as we only store once per second in the aggregator approach.)
         timing_log = (
-            f"FACE_STREAM: Frame {frame_count_face} complete pipeline breakdown:\n"
+            f"FACE_STREAM: Frame {frame_count_face} pipeline:\n"
             f"  - Frame Capture: {frame_capture_time:.2f}ms\n"
             f"  - Face Detection: {face_detect_time:.2f}ms\n"
         )
@@ -392,7 +521,7 @@ def process_stream_face(url, sessionId):
                 f"  - Dlib Landmarks: {dlib_time:.2f}ms\n"
                 f"  - EAR Calculation: {ear_time:.2f}ms\n"
                 f"  - MAR Calculation: {mar_time:.2f}ms\n"
-                f"  - Face Size: {fw * fh} pixels\n"
+                f"  - Face Size: {fw * fh} px\n"
                 f"  - EAR Score: {ear_score:.3f}\n"
                 f"  - MAR Score: {mar_score:.3f}\n"
                 f"  - Eye Classification: {eye_classification}\n"
@@ -400,26 +529,10 @@ def process_stream_face(url, sessionId):
             )
         timing_log += (
             f"  - Frame Encoding: {encoding_time:.2f}ms\n"
-            f"  - Database Operations: {db_time:.2f}ms\n"
-            f"  - Total Pipeline Time: {total_time:.2f}ms\n"
+            f"  - DB Time: {db_time:.2f}ms\n"
+            f"  - Total Pipeline: {total_time:.2f}ms\n"
         )
         logger.info(timing_log)
-
-        # 9. Stream output
-        if face_stream_data_buffer.full():
-            face_stream_data_buffer.get_nowait()
-        face_stream_data_buffer.put(
-            {
-                "image": frame_base64,
-                "eye_prediction": eye_classification,
-                "ear_score": ear_score,
-                "mouth_prediction": mouth_classification,
-                "mar_score": mar_score,
-                "frame_number": frame_count_face,
-                "timestamp": int(time.time()),
-                "processing_time": total_time,
-            }
-        )
 
 
 # Body stream helper function
@@ -474,8 +587,8 @@ def detect_person_in_frame(frame, scale_factor=1.2, min_neighbors=1):
 
 # Expect body_stream_index_to_label classifications and Unknown as predictions on each frame
 def process_stream_body(url, sessionId):
-    global frame_count_body, clip_model, clip_preprocess, clip_classifier_body, body_batch_start
-    global body_stream_data_buffer, body_frame_buffer_db, body_thread_kill
+    global frame_count_body, clip_model, clip_preprocess, clip_classifier_body
+    global body_stream_data_buffer, body_frame_buffer_db, body_thread_kill, body_stream_cursecond_buffer
 
     if not all([clip_model, clip_preprocess, clip_classifier_body]):
         logger.error("BODY_STREAM: CLIP components not initialized")
@@ -484,8 +597,13 @@ def process_stream_body(url, sessionId):
     cap = cv2.VideoCapture(url)
     cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
 
+    # --- NEW CODE ---
+    # Track the "last second" so we know when a new second starts.
+    # We will accumulate predictions in `body_stream_cursecond_buffer` for that second.
+
+    last_second = None
+
     while not body_thread_kill:
-        # Initialize timing variables
         pipeline_start_time = time.time()
         frame_capture_time = 0
         preprocess_time = 0
@@ -493,6 +611,64 @@ def process_stream_body(url, sessionId):
         prediction_time = 0
         encoding_time = 0
         db_time = 0
+
+        # --- NEW CODE ---
+        # Figure out which second we are in right now.
+        now_second = int(time.time())
+
+        # If we've just moved to a new second, finalize the previous second's predictions.
+        if last_second is not None and now_second != last_second:
+            # If we have any buffered predictions from the last second, pick the majority.
+            if len(body_stream_cursecond_buffer) > 0:
+                counts = Counter(body_stream_cursecond_buffer)
+                majority_label, _ = counts.most_common(1)[0]
+
+                # 1) Build a dict containing both timestamp and classification
+                record = {
+                    "timestamp": last_second,  # the integer second
+                    "classification": majority_label,
+                }
+
+                # 2) Save it in the local DB buffer
+                if len(body_frame_buffer_db) < NUM_SECONDS_BEFORE_STORE_IN_DB:
+                    body_frame_buffer_db.append(record)
+                if len(body_frame_buffer_db) >= NUM_SECONDS_BEFORE_STORE_IN_DB:
+                    save_body_frames_to_firestore(sessionId)
+
+                # 3) Optionally also push a “final” entry to the front-end
+                current_entry = None
+                if body_stream_data_buffer.full():
+                    current_entry = body_stream_data_buffer.get_nowait()
+                # We are contending with the stream viewer code to get this entry in the queue
+                # If the stream viewer code gets it first, that's fine, we'll lose the image and
+                # we can just set the image to None
+                image_from_entry = (
+                    current_entry.get("image", None) if current_entry else None
+                )
+                body_stream_data_buffer.put(
+                    {
+                        "image": image_from_entry,
+                        "prediction": majority_label,
+                        "probability": None,
+                        "frame_number": None,
+                        "timestamp": last_second,
+                        "processing_time": None,
+                    }
+                )
+
+                # Clear the current-second buffer
+                body_stream_cursecond_buffer.clear()
+
+        # Update last_second if needed. First time through it might be None.
+        if last_second is None:
+            last_second = now_second
+        elif now_second != last_second:
+            # We finalized above, so now just set last_second
+            last_second = now_second
+
+        # ------------------------------------------------------------------
+        # -- ORIGINAL CODE BELOW (with slight modifications for new logic) --
+        # ------------------------------------------------------------------
 
         # Time frame capture
         capture_start = time.time()
@@ -522,7 +698,6 @@ def process_stream_body(url, sessionId):
                 preprocess_time = (time.time() - preprocess_start) * 1000
 
                 # Time feature extraction
-                # Just use clip for the feature extraction
                 feature_start = time.time()
                 with torch.no_grad():
                     features = clip_model.encode_image(processed)
@@ -530,9 +705,8 @@ def process_stream_body(url, sessionId):
                 feature_extraction_time = (time.time() - feature_start) * 1000
 
                 # Time prediction
-                # Use regression model from here https://github.com/zahid-isu/DriveCLIP/tree/main?tab=readme-ov-file
-                # Trained on clip feature output to produce single prediction output
-                # Need to investigate biasing this prediction towards safe driving
+                # Using linear regression model trained here for prediction based on clip feature output
+                # https://github.com/zahid-isu/DriveCLIP/tree/main?tab=readme-ov-file
                 prediction_start = time.time()
                 prediction = int(clip_classifier_body.predict(features)[0])
                 prob_score = clip_classifier_body.predict_proba(features)[0][prediction]
@@ -553,12 +727,10 @@ def process_stream_body(url, sessionId):
                 thickness = 2
                 text_to_draw = f"{prediction_label} ({prob_score:.2f})"
 
-                # Get text size for positioning
                 (text_width, text_height), baseline = cv2.getTextSize(
                     text_to_draw, font, font_scale, thickness
                 )
 
-                # Position text in top right with padding
                 padding = 10
                 text_x = frame_with_text.shape[1] - text_width - padding
                 text_y = text_height + padding
@@ -579,20 +751,15 @@ def process_stream_body(url, sessionId):
                 frame_base64 = base64.b64encode(buffer).decode("utf-8")
                 encoding_time = (time.time() - encode_start) * 1000
 
-                # Time database operations
-                db_start = time.time()
-                if len(body_frame_buffer_db) == 0:
-                    body_batch_start = int(time.time())
-                if len(body_frame_buffer_db) < NUM_FRAMES_BEFORE_STORE_IN_DB:
-                    body_frame_buffer_db.append(prediction_label)
-                if len(body_frame_buffer_db) >= NUM_FRAMES_BEFORE_STORE_IN_DB:
-                    save_body_frames_to_firestore(sessionId)
-                db_time = (time.time() - db_start) * 1000
+                # ----------------------------------------------------------------
+                # NOTE: The database logic for per-frame storage has been moved
+                #       to the "once a second has passed" block above, so we remove
+                #       the direct DB-append code here.
+                # ----------------------------------------------------------------
 
                 # Calculate total pipeline time and log all metrics
                 total_time = (time.time() - pipeline_start_time) * 1000
 
-                # Comprehensive timing breakdown
                 timing_log = (
                     f"BODY_STREAM: Frame {frame_count_body} complete pipeline breakdown:\n"
                     f"  - Frame Capture: {frame_capture_time:.2f}ms\n"
@@ -612,18 +779,15 @@ def process_stream_body(url, sessionId):
                 prediction_label = "Unknown"
                 prob_score = None
 
-                # Draw "Unknown" with consistent positioning
                 font = cv2.FONT_HERSHEY_SIMPLEX
                 font_scale = 0.8
                 thickness = 2
                 text_to_draw = "Unknown"
 
-                # Get text size for positioning
                 (text_width, text_height), baseline = cv2.getTextSize(
                     text_to_draw, font, font_scale, thickness
                 )
 
-                # Position text in top right with padding
                 padding = 10
                 text_x = frame_with_text.shape[1] - text_width - padding
                 text_y = text_height + padding
@@ -638,7 +802,6 @@ def process_stream_body(url, sessionId):
                     thickness,
                 )
 
-                # Encode frame with "Unknown" text
                 _, buffer = cv2.imencode(".jpg", frame_with_text)
                 frame_base64 = base64.b64encode(buffer).decode("utf-8")
         else:
@@ -648,12 +811,10 @@ def process_stream_body(url, sessionId):
             thickness = 2
             text_to_draw = "Unknown"
 
-            # Get text size for positioning
             (text_width, text_height), baseline = cv2.getTextSize(
                 text_to_draw, font, font_scale, thickness
             )
 
-            # Position text in top right with padding
             padding = 10
             text_x = frame_with_text.shape[1] - text_width - padding
             text_y = text_height + padding
@@ -668,13 +829,11 @@ def process_stream_body(url, sessionId):
                 thickness,
             )
 
-            # Time frame encoding for failed detection case
             encode_start = time.time()
             _, buffer = cv2.imencode(".jpg", frame_with_text)
             frame_base64 = base64.b64encode(buffer).decode("utf-8")
             encoding_time = (time.time() - encode_start) * 1000
 
-            # Calculate and log total time for failed detection
             total_time = (time.time() - pipeline_start_time) * 1000
             logger.info(
                 f"BODY_STREAM: Frame {frame_count_body} pipeline breakdown (no person):\n"
@@ -684,16 +843,27 @@ def process_stream_body(url, sessionId):
                 f"  - Prediction: Unknown (No person detected)"
             )
 
-        # Stream output
+        # --- NEW CODE ---
+        # Regardless of how we got the label (or unknown), we add it to our
+        # body_stream_cursecond_buffer for the current second so we can do a
+        # majority vote later.
+        body_stream_cursecond_buffer.append(prediction_label)
+
+        # Also, while we are still in this second, we do NOT show the prediction
+        # on the frontend yet, so set 'prediction': None in body_stream_data_buffer.
+        # (If the buffer is full, pop one to make room.)
         if body_stream_data_buffer.full():
             body_stream_data_buffer.get_nowait()
+
+        total_time = (time.time() - pipeline_start_time) * 1000
+
         body_stream_data_buffer.put(
             {
                 "image": frame_base64,
-                "prediction": prediction_label,
-                "probability": prob_score,
+                "prediction": None,  # <--- Hide actual prediction for now
+                "probability": None,  # <--- Also hide probability
                 "frame_number": frame_count_body,
-                "timestamp": int(time.time()),
+                "timestamp": now_second,  # integer second
                 "processing_time": total_time,
             }
         )

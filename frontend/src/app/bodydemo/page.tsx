@@ -68,26 +68,16 @@ export default function BodyDemo() {
           <Typography variant="h5" textAlign={"center"} fontWeight={500}>
             Live Frame Classification
           </Typography>
-          {livePredictStream.map((prediction, index) => (
+          {livePredictStream
+            .filter(prediction => prediction.value)
+            .map((prediction, index) => (
             <Box key={index} className={styles.liveClasBox}>
-              <Typography textAlign="center" width={150}>
-                {`Frame #${prediction.frameNum}`}
-              </Typography>
-              <Divider orientation="vertical" flexItem />
               <Typography textAlign="center" width={150}>
                 {`Timestamp ${prediction.timestamp}`}
               </Typography>
               <Divider orientation="vertical" flexItem />
               <Typography textAlign="center" width={150}>
-              {`Processing Time ${prediction.processing_time.toFixed(2)}`}
-              </Typography>
-              <Divider orientation="vertical" flexItem />
-              <Typography textAlign="center" width={150}>
                 {`Prediction: ${prediction.value}`}
-              </Typography>
-              <Divider orientation="vertical" flexItem />
-              <Typography textAlign="center" width={150}>
-                {`Prediction Probability: ${(prediction.probability * 100).toFixed(2)}%`}
               </Typography>
             </Box>
           ))}
