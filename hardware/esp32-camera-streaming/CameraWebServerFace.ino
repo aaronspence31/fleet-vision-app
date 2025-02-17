@@ -15,23 +15,26 @@ const char *ssid = "SPIDER-LAN";
 const char *password = "GreatPowerGreatResponsibility123!";
 
 WebServer server(80);
- 
+
 // Set the initial resolution manually here
 framesize_t currentResolution = FRAMESIZE_HD;
 
 // Function to print FPS to the Serial Monitor
-void printFPS() {
+void printFPS()
+{
   static int frameCount = 0;
   static unsigned long lastTime = 0;
   frameCount++;
-  if (millis() - lastTime >= 1000) {
+  if (millis() - lastTime >= 1000)
+  {
     Serial.printf("FPS: %d\n", frameCount);
     frameCount = 0;
     lastTime = millis();
   }
 }
 
-void handleRoot() {
+void handleRoot()
+{
   server.send(200, "text/html", R"rawliteral(
 <!DOCTYPE html>
 <html lang="en">
@@ -48,21 +51,25 @@ void handleRoot() {
 )rawliteral");
 }
 
-void handleNotFound() {
+void handleNotFound()
+{
   server.send(404, "text/plain", "Not found");
 }
 
-void handleStream() {
+void handleStream()
+{
   WiFiClient client = server.client();
-  camera_fb_t * fb = NULL;
+  camera_fb_t *fb = NULL;
   bool send = true;
   String response = "HTTP/1.1 200 OK\r\n" +
                     String("Content-Type: multipart/x-mixed-replace; boundary=frame\r\n\r\n");
   server.sendContent(response);
 
-  while (send) {
+  while (send)
+  {
     fb = esp_camera_fb_get();
-    if (!fb) {
+    if (!fb)
+    {
       Serial.println("Camera capture failed");
       server.send(500, "text/plain", "Camera capture failed");
       return;
@@ -77,13 +84,15 @@ void handleStream() {
 
     printFPS();
 
-    if (!client.connected()) {
+    if (!client.connected())
+    {
       send = false;
     }
   }
 }
 
-void startCamera() {
+void startCamera()
+{
   // Ensure the camera is deinitialized before reinitializing
   esp_camera_deinit();
 
@@ -108,34 +117,42 @@ void startCamera() {
   config.pin_reset = RESET_GPIO_NUM;
   config.xclk_freq_hz = 20000000;
   config.frame_size = currentResolution;
-  config.pixel_format = PIXFORMAT_JPEG;  // for streaming
+  config.pixel_format = PIXFORMAT_JPEG; // for streaming
   config.grab_mode = CAMERA_GRAB_WHEN_EMPTY;
   config.fb_location = CAMERA_FB_IN_PSRAM;
   config.jpeg_quality = 12;
   config.fb_count = 1;
 
-  if (config.pixel_format == PIXFORMAT_JPEG) {
-    if (psramFound()) {
+  if (config.pixel_format == PIXFORMAT_JPEG)
+  {
+    if (psramFound())
+    {
       config.jpeg_quality = 10;
       config.fb_count = 2;
       config.grab_mode = CAMERA_GRAB_LATEST;
-    } else {
+    }
+    else
+    {
       config.frame_size = FRAMESIZE_SVGA;
       config.fb_location = CAMERA_FB_IN_DRAM;
     }
-  } else {
+  }
+  else
+  {
     config.frame_size = FRAMESIZE_240X240;
   }
 
   // Camera init
   esp_err_t err = esp_camera_init(&config);
-  if (err != ESP_OK) {
+  if (err != ESP_OK)
+  {
     Serial.printf("Camera init failed with error 0x%x", err);
     return;
   }
 
   sensor_t *s = esp_camera_sensor_get();
-  if (s->id.PID == OV3660_PID) {
+  if (s->id.PID == OV3660_PID)
+  {
     s->set_vflip(s, 1);
     s->set_brightness(s, 1);
     s->set_saturation(s, -2);
@@ -153,7 +170,8 @@ void startCamera() {
 #endif
 }
 
-void setup() {
+void setup()
+{
   Serial.begin(115200);
   Serial.setDebugOutput(true);
   Serial.println();
@@ -162,7 +180,8 @@ void setup() {
   WiFi.setSleep(false);
 
   Serial.println("Connecting to WiFi...");
-  while (WiFi.status() != WL_CONNECTED) {
+  while (WiFi.status() != WL_CONNECTED)
+  {
     delay(1000);
     Serial.print(".");
   }
@@ -172,8 +191,9 @@ void setup() {
   Serial.print("IP Address: ");
   Serial.println(WiFi.localIP());
 
-  if (MDNS.begin("esp32")) {
-    Serial.println("MDNS responder started"); 
+  if (MDNS.begin("esp32face"))
+  {
+    Serial.println("MDNS responder started");
   }
 
   server.on("/", handleRoot);
@@ -190,6 +210,7 @@ void setup() {
   startCamera(); // Start camera initially
 }
 
-void loop() {
+void loop()
+{
   server.handleClient();
 }

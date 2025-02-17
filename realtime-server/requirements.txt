@@ -26,3 +26,4 @@ scikit-learn
 dlib
 imutils
 scikit-learn==1.3.0
+zeroconf

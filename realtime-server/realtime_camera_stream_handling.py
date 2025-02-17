@@ -19,6 +19,8 @@ from firebase_admin import firestore
 from flask import Blueprint, Response, make_response
 import dlib
 from imutils import face_utils
+from zeroconf import Zeroconf
+import socket
 
 realtime_camera_stream_handling = Blueprint("realtime_camera_stream_handling", __name__)
 logging.basicConfig(
@@ -27,10 +29,11 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Constants
-# FACE_STREAM_URL = "http://172.20.10.3/stream"  # ai thinker hotspot aaron
-FACE_STREAM_URL = "http://192.168.0.105/stream"  # ai thinker home wifi aaron
-# BODY_STREAM_URL = "http://172.20.10.8/stream"  # ai thinker hotspot aaron
-BODY_STREAM_URL = "http://192.168.0.104/stream"  # wrover home wifi aaron
+# These work when on wifi, may break when on hotspot
+# Ideally it will still work as long as you have maximize compatibility enabled on the hotspot
+# It works on a hotspot with maximize compatibility enabled for me
+FACE_STREAM_MDNS_NAME = "esp32face.local"
+BODY_STREAM_MDNS_NAME = "esp32body.local"
 CLIP_MODEL_NAME = "ViT-L/14"
 CLIP_INPUT_SIZE = 224
 # Using linear regression model trained here for prediction based on CLIP feature output:
@@ -114,6 +117,25 @@ body_thread_kill = False
 # Store the current frame count for each stream
 frame_count_face = 0
 frame_count_body = 0
+
+
+# Helper function used by stream starters to resolve the mDNS name to an IP address
+def resolve_mdns_via_zeroconf(hostname: str) -> str:
+    """
+    Attempt to resolve the given mDNS 'hostname' (like 'esp32face.local')
+    to an IPv4 address using Zeroconf. Returns IP string or None on failure.
+    """
+    zc = Zeroconf()
+    try:
+        time.sleep(0.1)  # optionally let Zeroconf start up
+        ip = socket.gethostbyname(hostname)
+        logger.info(f"Resolved {hostname} => {ip}")
+        return ip
+    except Exception as e:
+        logger.error(f"Failed to resolve {hostname} via Zeroconf: {e}")
+        return None
+    finally:
+        zc.close()
 
 
 # Face stream helper function to save to the DB
@@ -980,23 +1002,42 @@ def process_stream_body(url, sessionId):
 def both_streams_start():
     global body_processing_thread, face_processing_thread
 
+    # Check if they're already running
     if body_processing_thread and body_processing_thread.is_alive():
         return make_response("Body processing thread already running", 409)
-
     if face_processing_thread and face_processing_thread.is_alive():
         return make_response("Face processing thread already running", 409)
 
+    # 1) Resolve face camera
+    face_ip = resolve_mdns_via_zeroconf(FACE_STREAM_MDNS_NAME)
+    if face_ip:
+        face_url = f"http://{face_ip}/stream"
+    else:
+        # fallback to .local
+        face_url = f"http://{FACE_STREAM_MDNS_NAME}/stream"
+
+    # 2) Resolve body camera
+    body_ip = resolve_mdns_via_zeroconf(BODY_STREAM_MDNS_NAME)
+    if body_ip:
+        body_url = f"http://{body_ip}/stream"
+    else:
+        body_url = f"http://{BODY_STREAM_MDNS_NAME}/stream"
+
+    logger.info(f"Starting both: FACE => {face_url}, BODY => {body_url}")
+
     sessionId = uuid.uuid4()
+
+    # 3) Create threads using the local URLs
     body_processing_thread = threading.Thread(
-        target=process_stream_body, args=(BODY_STREAM_URL, sessionId)
+        target=process_stream_body, args=(body_url, sessionId)
     )
     body_processing_thread.start()
 
     face_processing_thread = threading.Thread(
-        target=process_stream_face,
-        args=(FACE_STREAM_URL, sessionId),
+        target=process_stream_face, args=(face_url, sessionId)
     )
     face_processing_thread.start()
+
     return make_response(
         f"Body and Face processing started for session {sessionId}", 200
     )
@@ -1118,10 +1159,18 @@ def face_stream_start():
     if face_processing_thread and face_processing_thread.is_alive():
         return make_response("Face processing thread already running", 409)
 
+    # Resolve the IP
+    face_ip = resolve_mdns_via_zeroconf(FACE_STREAM_MDNS_NAME)
+    if face_ip:
+        face_url = f"http://{face_ip}/stream"
+    else:
+        face_url = f"http://{FACE_STREAM_MDNS_NAME}/stream"
+
+    logger.info(f"Face camera => {face_url}")
     sessionId = uuid.uuid4()
+
     face_processing_thread = threading.Thread(
-        target=process_stream_face,
-        args=(FACE_STREAM_URL, sessionId),
+        target=process_stream_face, args=(face_url, sessionId)
     )
     face_processing_thread.start()
     return make_response(f"Face processing started for session {sessionId}", 200)
@@ -1161,9 +1210,17 @@ def body_stream_start():
     if body_processing_thread and body_processing_thread.is_alive():
         return make_response("Body processing thread already running", 409)
 
+    body_ip = resolve_mdns_via_zeroconf(BODY_STREAM_MDNS_NAME)
+    if body_ip:
+        body_url = f"http://{body_ip}/stream"
+    else:
+        body_url = f"http://{BODY_STREAM_MDNS_NAME}/stream"
+
+    logger.info(f"Body camera => {body_url}")
     sessionId = uuid.uuid4()
+
     body_processing_thread = threading.Thread(
-        target=process_stream_body, args=(BODY_STREAM_URL, sessionId)
+        target=process_stream_body, args=(body_url, sessionId)
     )
     body_processing_thread.start()
     return make_response(f"Body processing started for session {sessionId}", 200)

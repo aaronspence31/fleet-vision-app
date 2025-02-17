@@ -16,13 +16,15 @@ WebServer server(80);
 // Set the initial resolution
 framesize_t currentResolution = FRAMESIZE_HD;
 
-void setResolution(framesize_t resolution) {
+void setResolution(framesize_t resolution)
+{
   sensor_t *s = esp_camera_sensor_get();
   s->set_framesize(s, resolution);
   currentResolution = resolution;
 }
 
-void handleRoot() {
+void handleRoot()
+{
   String html = R"rawliteral(
 <!DOCTYPE html>
 <html lang="en">
@@ -57,17 +59,20 @@ function changeResolution(resolution) {
   server.send(200, "text/html", html);
 }
 
-void handleStream() {
+void handleStream()
+{
   WiFiClient client = server.client();
-  camera_fb_t * fb = NULL;
+  camera_fb_t *fb = NULL;
   bool send = true;
   String response = "HTTP/1.1 200 OK\r\n" +
                     String("Content-Type: multipart/x-mixed-replace; boundary=frame\r\n\r\n");
   server.sendContent(response);
 
-  while (send) {
+  while (send)
+  {
     fb = esp_camera_fb_get();
-    if (!fb) {
+    if (!fb)
+    {
       Serial.println("Camera capture failed");
       server.send(500, "text/plain", "Camera capture failed");
       return;
@@ -80,25 +85,33 @@ void handleStream() {
     server.sendContent("\r\n");
     esp_camera_fb_return(fb);
 
-    if (!client.connected()) {
+    if (!client.connected())
+    {
       send = false;
     }
   }
 }
 
-void handleResolution() {
+void handleResolution()
+{
   String resolution = server.arg("set");
-  
-  if (resolution == "QVGA") setResolution(FRAMESIZE_QVGA);
-  else if (resolution == "VGA") setResolution(FRAMESIZE_VGA);
-  else if (resolution == "SVGA") setResolution(FRAMESIZE_SVGA);
-  else if (resolution == "XGA") setResolution(FRAMESIZE_XGA);
-  else if (resolution == "SXGA") setResolution(FRAMESIZE_SXGA);
-  
+
+  if (resolution == "QVGA")
+    setResolution(FRAMESIZE_QVGA);
+  else if (resolution == "VGA")
+    setResolution(FRAMESIZE_VGA);
+  else if (resolution == "SVGA")
+    setResolution(FRAMESIZE_SVGA);
+  else if (resolution == "XGA")
+    setResolution(FRAMESIZE_XGA);
+  else if (resolution == "SXGA")
+    setResolution(FRAMESIZE_SXGA);
+
   server.send(200, "text/plain", "Resolution set to " + resolution);
 }
 
-void setup() {
+void setup()
+{
   Serial.begin(115200);
   Serial.setDebugOutput(true);
   Serial.println();
@@ -131,7 +144,8 @@ void setup() {
   config.fb_count = 1;
 
   esp_err_t err = esp_camera_init(&config);
-  if (err != ESP_OK) {
+  if (err != ESP_OK)
+  {
     Serial.printf("Camera init failed with error 0x%x", err);
     return;
   }
@@ -139,7 +153,8 @@ void setup() {
   WiFi.begin(ssid, password);
   WiFi.setSleep(false);
 
-  while (WiFi.status() != WL_CONNECTED) {
+  while (WiFi.status() != WL_CONNECTED)
+  {
     delay(500);
     Serial.print(".");
   }
@@ -149,7 +164,7 @@ void setup() {
   server.on("/", handleRoot);
   server.on("/stream", HTTP_GET, handleStream);
   server.on("/resolution", HTTP_GET, handleResolution);
-  
+
   server.begin();
   Serial.println("HTTP server started");
 
@@ -158,6 +173,7 @@ void setup() {
   Serial.println("' to connect");
 }
 
-void loop() {
+void loop()
+{
   server.handleClient();
 }
