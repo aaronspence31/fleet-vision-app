@@ -27,18 +27,16 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Constants
-# If your FACE_STREAM_URL and BODY_STREAM_URL are the same, you will get errors!
 # FACE_STREAM_URL = "http://172.20.10.3/stream"  # ai thinker hotspot aaron
 FACE_STREAM_URL = "http://192.168.0.105/stream"  # ai thinker home wifi aaron
 # BODY_STREAM_URL = "http://172.20.10.8/stream"  # ai thinker hotspot aaron
 BODY_STREAM_URL = "http://192.168.0.104/stream"  # wrover home wifi aaron
-# Clip constants
 CLIP_MODEL_NAME = "ViT-L/14"
 CLIP_INPUT_SIZE = 224
 CLIP_MODEL_PATH_BODY = "dmd29_vitbl14-hypc_429_1000_ft.pkl"
-# Thresholds used for face stream
 EAR_THRESHOLD = 0.25
 MAR_THRESHOLD = 0.25
+NUM_SECONDS_BEFORE_STORE_IN_DB = 2
 
 # Setup cv2 classifiers to detect a person in the frame
 faceCascade = cv2.CascadeClassifier(
@@ -51,43 +49,38 @@ upperBodyCascade = cv2.CascadeClassifier(
     cv2.data.haarcascades + "haarcascade_upperbody.xml"
 )
 
+# Setup model directory
 base_dir = os.path.dirname(os.path.abspath(__file__))
 model_dir = os.path.join(base_dir, "models")
 
-# Setup dlib face landmark predictor to find eyes
-landmark_predictor = dlib.shape_predictor(
-    os.path.join(model_dir, "shape_predictor_68_face_landmarks.dat")
-)
+# Setup dlib face landmark predictor to find eyes and mouth
+try:
+    landmark_predictor = dlib.shape_predictor(
+        os.path.join(model_dir, "shape_predictor_68_face_landmarks.dat")
+    )
+    logger.info("Dlib Face Landmark model loaded successfully")
+except Exception as e:
+    logger.error(f"Error loading Dlib Face Landmark model: {str(e)}")
+    raise
 
-# WHY BUFFER RATHER THAN JUST SAVING TO FIRESTORE IMMEDIATELY?
-NUM_SECONDS_BEFORE_STORE_IN_DB = 1
-frame_count_face = 0
-face_frame_buffer_db = []
-face_processing_thread = None
-face_thread_kill = False
-frame_count_body = 0
-body_frame_buffer_db = []
-body_processing_thread = None
-body_thread_kill = False
-
-# THIS BUFFER IS FOR VIEWING THE STREAM AND PREDICTIONS LIVE
-# small max length as we only want to show the most recent frames
-# these queues must be thread safe as they are accessed by multiple threads
-face_stream_data_buffer = Queue(maxsize=1)
-body_stream_data_buffer = Queue(maxsize=1)
-
-# These buffers will hold the predictions data for the current second
-face_stream_cursecond_buffer = []
-body_stream_cursecond_buffer = []
-
-# Add global variables for clip model
+# Setup CLIP global variables
 clip_model = None
 clip_preprocess = None
 clip_classifier_body = None
 device = "cuda" if torch.cuda.is_available() else "cpu"
 logger.info(f"CLIP Using device: {device}")
 
-# TODO: Frontend code should also handle Unknown as a prediction
+# Initialize CLIP components
+try:
+    clip_model, clip_preprocess = clip.load(CLIP_MODEL_NAME, device)
+    clip_model.eval()
+    clip_classifier_body = joblib.load(os.path.join(model_dir, CLIP_MODEL_PATH_BODY))
+    logger.info("CLIP model and classifier loaded successfully")
+except Exception as e:
+    logger.error(f"Error loading CLIP model: {str(e)}")
+    raise
+
+# Map indices to labels for body stream regression model output
 body_stream_index_to_label = {
     0: "Drinking beverage",
     1: "Adjusting hair, glasses, or makeup",
@@ -101,25 +94,27 @@ body_stream_index_to_label = {
     9: "Yawning",
 }
 
+# Stream processing buffers, thread management variables and counters
+# Setup buffers to hold the predictions data for all frames in the current second
+face_stream_cursecond_buffer = []
+body_stream_cursecond_buffer = []
+# Thread safe buffers for viewing the video streams and predictions in real-time
+face_stream_data_buffer = Queue(maxsize=1)
+body_stream_data_buffer = Queue(maxsize=1)
+# Setup db streaming buffers
+face_frame_buffer_db = []
+body_frame_buffer_db = []
+# Setup threads and thread kill flags
+face_processing_thread = None
+face_thread_kill = False
+body_processing_thread = None
+body_thread_kill = False
+# Store the current frame count for each stream
+frame_count_face = 0
+frame_count_body = 0
 
-# Initialize CLIP components
-def init_clip():
-    global clip_model, clip_preprocess, clip_classifier_body
-    clip_model, clip_preprocess = clip.load(CLIP_MODEL_NAME, device)
-    clip_model.eval()
-    clip_classifier_body = joblib.load(os.path.join(model_dir, CLIP_MODEL_PATH_BODY))
 
-
-# Initialize CLIP components
-try:
-    init_clip()
-    logger.info("CLIP model and classifier loaded successfully")
-except Exception as e:
-    logger.error(f"Error loading CLIP model: {str(e)}")
-    raise
-
-
-# Face stream helper function
+# Face stream helper function to save to the DB
 # Each second classification will be stored in the format below
 # face_drive_sessions/<sessionId>/face_drive_session_classifications/<timestamp>
 # there will be a eye_classification and mouth_classification field with the final classification for that second
@@ -132,7 +127,7 @@ def save_face_frames_to_firestore(sessionId):
     global face_frame_buffer_db
 
     if len(face_frame_buffer_db) >= NUM_SECONDS_BEFORE_STORE_IN_DB:
-        logger.info("FACE_STREAM: Saving face frames to Firestore")
+        logger.debug("FACE_STREAM: Saving face frames to Firestore")
 
         # Copy the buffer so we don't mutate it while writing
         frame_data = list(face_frame_buffer_db)
@@ -146,7 +141,7 @@ def save_face_frames_to_firestore(sessionId):
             doc_ref.set(
                 {"session_id": str(sessionId), "created_at": firestore.SERVER_TIMESTAMP}
             )
-            logger.info(
+            logger.debug(
                 f"FACE_STREAM: Created new session doc for session ID {sessionId}"
             )
 
@@ -156,9 +151,9 @@ def save_face_frames_to_firestore(sessionId):
         for record in frame_data:
             ts = record["timestamp"]  # integer second or unique timestamp
             eye_label = record["eye_classification"]  # eye classification
-            mouth_label = record["mouth_classification"]  # eye classification
+            mouth_label = record["mouth_classification"]  # mouth classification
 
-            # Document ID = timestamp; store both timestamp and classification
+            # Document ID = timestamp; store both timestamp and classifications
             doc_ref.collection("face_drive_session_classifications").document(
                 str(ts)
             ).set(
@@ -174,56 +169,6 @@ def save_face_frames_to_firestore(sessionId):
 
         # 3) Clear the local buffer and reset
         face_frame_buffer_db = []
-
-
-# Body stream helper function
-# Each second classification will be stored in the format below
-# body_drive_sessions/<sessionId>/body_drive_session_classifications/<timestamp>
-# there will be a single classification field with the final classification for that second
-def save_body_frames_to_firestore(sessionId):
-    """
-    Saves classification data to Firestore under a document named after sessionId
-    in the 'body_drive_sessions' collection. If the session doc does not exist, it is created.
-    Otherwise, we update the existing doc with new timestamped classifications.
-    """
-    global body_frame_buffer_db
-
-    if len(body_frame_buffer_db) >= NUM_SECONDS_BEFORE_STORE_IN_DB:
-        logger.info("BODY_STREAM: Saving body frames to Firestore")
-
-        # Copy the buffer so we don't mutate it while writing
-        frame_data = list(body_frame_buffer_db)
-
-        # 1) Create or retrieve the doc for this session ID
-        doc_ref = body_drive_sessions.document(str(sessionId))
-        doc_snapshot = doc_ref.get()
-
-        if not doc_snapshot.exists:
-            # If doc does not exist, create it
-            doc_ref.set(
-                {"session_id": str(sessionId), "created_at": firestore.SERVER_TIMESTAMP}
-            )
-            logger.info(
-                f"BODY_STREAM: Created new session doc for session ID {sessionId}"
-            )
-
-        # 2) Write each (timestamp, classification) as a doc in 'body_drive_session_classifications'
-        db_start_time = time.time()
-
-        for record in frame_data:
-            ts = record["timestamp"]  # integer second or unique timestamp
-            label = record["classification"]  # your final classification
-
-            # Document ID = timestamp; store both timestamp and classification
-            doc_ref.collection("body_drive_session_classifications").document(
-                str(ts)
-            ).set({"timestamp": ts, "classification": label})
-
-        db_time = (time.time() - db_start_time) * 1000  # milliseconds
-        logger.info(f"BODY_STREAM: Database save completed in {db_time:.2f}ms")
-
-        # 3) Clear the local buffer and reset
-        body_frame_buffer_db = []
 
 
 # Face stream helper function to compute Eye Aspect Ratio (EAR)
@@ -247,6 +192,7 @@ def compute_MAR(mouth):
     return mar
 
 
+# Main face stream processing function
 # Eyes State Predictions are Eyes Open, Eyes Closed or Unknown
 # Mouth State Predictions are Mouth Open, Mouth Closed or Unknown
 # Used paper here https://pmc.ncbi.nlm.nih.gov/articles/PMC11398282/
@@ -525,7 +471,57 @@ def process_stream_face(url, sessionId):
         logger.info(timing_log)
 
 
-# Body stream helper function
+# Body stream helper function for saving to DB
+# Each second classification will be stored in the format below
+# body_drive_sessions/<sessionId>/body_drive_session_classifications/<timestamp>
+# there will be a single classification field with the final classification for that second
+def save_body_frames_to_firestore(sessionId):
+    """
+    Saves classification data to Firestore under a document named after sessionId
+    in the 'body_drive_sessions' collection. If the session doc does not exist, it is created.
+    Otherwise, we update the existing doc with new timestamped classifications.
+    """
+    global body_frame_buffer_db
+
+    if len(body_frame_buffer_db) >= NUM_SECONDS_BEFORE_STORE_IN_DB:
+        logger.debug("BODY_STREAM: Saving body frames to Firestore")
+
+        # Copy the buffer so we don't mutate it while writing
+        frame_data = list(body_frame_buffer_db)
+
+        # 1) Create or retrieve the doc for this session ID
+        doc_ref = body_drive_sessions.document(str(sessionId))
+        doc_snapshot = doc_ref.get()
+
+        if not doc_snapshot.exists:
+            # If doc does not exist, create it
+            doc_ref.set(
+                {"session_id": str(sessionId), "created_at": firestore.SERVER_TIMESTAMP}
+            )
+            logger.debug(
+                f"BODY_STREAM: Created new session doc for session ID {sessionId}"
+            )
+
+        # 2) Write each (timestamp, classification) as a doc in 'body_drive_session_classifications'
+        db_start_time = time.time()
+
+        for record in frame_data:
+            ts = record["timestamp"]  # integer second or unique timestamp
+            label = record["classification"]  # your final classification
+
+            # Document ID = timestamp; store both timestamp and classification
+            doc_ref.collection("body_drive_session_classifications").document(
+                str(ts)
+            ).set({"timestamp": ts, "classification": label})
+
+        db_time = (time.time() - db_start_time) * 1000  # milliseconds
+        logger.info(f"BODY_STREAM: Database save completed in {db_time:.2f}ms")
+
+        # 3) Clear the local buffer and reset
+        body_frame_buffer_db = []
+
+
+# Body stream helper function for preprocess inputs to CLIP
 def preprocess_frame_clip(frame, preprocess):
     # Convert BGR to RGB and to PIL
     rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
@@ -536,10 +532,9 @@ def preprocess_frame_clip(frame, preprocess):
     return processed.unsqueeze(0)
 
 
-# Body stream helper function
+# Body stream helper function to detect person in frame - NOT USED RIGHT NOW
 # Detect a person in frame so we predict Unknown if there is no person detected rather
 # than confidently predicting safe driving when there is noone in the frame
-# This needs to be extremely fast as it will be called every frame
 def detect_person_in_frame(frame, scale_factor=1.2, min_neighbors=1):
     start_time = time.time()
     gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
@@ -575,6 +570,7 @@ def detect_person_in_frame(frame, scale_factor=1.2, min_neighbors=1):
     return len(faces) > 0
 
 
+# Main body stream processing function
 # Expect body_stream_index_to_label classifications and Unknown as predictions on each frame
 def process_stream_body(url, sessionId):
     global frame_count_body, clip_model, clip_preprocess, clip_classifier_body
@@ -862,8 +858,7 @@ def process_stream_body(url, sessionId):
 # PUT ALL ROUTES BELOW -----------------------------------------------------------------------
 
 
-# Start both streams as part of the same session
-# Important because we need both streams to have the same session ID
+# Start both stream processing functions as part of the same session
 @realtime_camera_stream_handling.route("/both_streams_start")
 def both_streams_start():
     global body_processing_thread, face_processing_thread
@@ -890,7 +885,7 @@ def both_streams_start():
     )
 
 
-# Attempt to stop both streams
+# Attempt to stop both processing functions
 @realtime_camera_stream_handling.route("/both_streams_stop")
 def both_streams_stop():
     global body_processing_thread, body_thread_kill, face_processing_thread, face_thread_kill
@@ -970,7 +965,7 @@ def face_stream_view():
                     yield f"data: {json.dumps(frame)}\n\n"
             except queue.Empty:
                 pass
-            time.sleep(0.1)  # Prevent CPU thrashing
+            time.sleep(0.05)
 
     return Response(generate(), mimetype="text/event-stream")
 
@@ -987,7 +982,7 @@ def body_stream_view():
                     yield f"data: {json.dumps(frame)}\n\n"
             except queue.Empty:
                 pass
-            time.sleep(0.1)  # Prevent CPU thrashing
+            time.sleep(0.05)
 
     return Response(generate(), mimetype="text/event-stream")
 
