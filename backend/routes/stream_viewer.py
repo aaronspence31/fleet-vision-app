@@ -968,7 +968,38 @@ def both_streams_stop():
     )
 
 
-# TODO: add a route to view both streams at the same time
+@stream_viewer.route("/face_stream_view")
+def face_stream_view():
+    global face_stream_data_buffer
+
+    def generate():
+        while True:
+            try:
+                while not face_stream_data_buffer.empty():
+                    frame = face_stream_data_buffer.get_nowait()
+                    yield f"data: {json.dumps(frame)}\n\n"
+            except queue.Empty:
+                pass
+            time.sleep(0.1)  # Prevent CPU thrashing
+
+    return Response(generate(), mimetype="text/event-stream")
+
+
+@stream_viewer.route("/body_stream_view")
+def body_stream_view():
+    global body_stream_data_buffer
+
+    def generate():
+        while True:
+            try:
+                while not body_stream_data_buffer.empty():
+                    frame = body_stream_data_buffer.get_nowait()
+                    yield f"data: {json.dumps(frame)}\n\n"
+            except queue.Empty:
+                pass
+            time.sleep(0.1)  # Prevent CPU thrashing
+
+    return Response(generate(), mimetype="text/event-stream")
 
 
 @stream_viewer.route("/face_stream_start")
@@ -1014,23 +1045,6 @@ def face_stream_stop():
         return make_response(f"Error stopping thread: {str(e)}", 500)
 
 
-@stream_viewer.route("/face_stream_view")
-def face_stream_view():
-    global face_stream_data_buffer
-
-    def generate():
-        while True:
-            try:
-                while not face_stream_data_buffer.empty():
-                    frame = face_stream_data_buffer.get_nowait()
-                    yield f"data: {json.dumps(frame)}\n\n"
-            except queue.Empty:
-                pass
-            time.sleep(0.1)  # Prevent CPU thrashing
-
-    return Response(generate(), mimetype="text/event-stream")
-
-
 @stream_viewer.route("/body_stream_start")
 def body_stream_start():
     global body_processing_thread
@@ -1071,23 +1085,6 @@ def body_stream_stop():
     except Exception as e:
         logger.error(f"Error stopping body processing thread: {str(e)}")
         return make_response(f"Error stopping thread: {str(e)}", 500)
-
-
-@stream_viewer.route("/body_stream_view")
-def body_stream_view():
-    global body_stream_data_buffer
-
-    def generate():
-        while True:
-            try:
-                while not body_stream_data_buffer.empty():
-                    frame = body_stream_data_buffer.get_nowait()
-                    yield f"data: {json.dumps(frame)}\n\n"
-            except queue.Empty:
-                pass
-            time.sleep(0.1)  # Prevent CPU thrashing
-
-    return Response(generate(), mimetype="text/event-stream")
 
 
 # TODO: Save to the database if we are on a different second based on server time
