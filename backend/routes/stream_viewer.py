@@ -14,7 +14,7 @@ import queue
 from PIL import Image
 from queue import Queue
 from collections import Counter
-from firestore import body_drive_sessions, face_drive_sessions
+from firestore import body_drive_sessions, face_drive_sessions, obd_drive_sessions
 from firebase_admin import firestore
 from flask import Blueprint, Response, make_response, request
 import dlib
@@ -28,6 +28,13 @@ logger = logging.getLogger(__name__)
 
 # Buffer for OBD data
 obd_data_buffer = Queue(maxsize=1)
+
+OBD_FIELDS = [
+    'speed',
+    'rpm',
+    'dtc',
+    'timestamp'
+]
 
 # Constants
 # If your FACE_STREAM_URL and BODY_STREAM_URL are the same, you will get errors!
@@ -79,6 +86,11 @@ frame_count_body = 0
 body_frame_buffer_db = []
 body_processing_thread = None
 body_thread_kill = False
+obd_frame_buffer_db = []
+
+# for timestamp of OBD, want to update on new server second only
+last_processed_second = None
+current_session_id = None
 
 # THIS BUFFER IS FOR VIEWING THE STREAM AND PREDICTIONS LIVE
 # small max length as we only want to show the most recent frames
@@ -235,6 +247,92 @@ def save_body_frames_to_firestore(sessionId):
         # 3) Clear the local buffer and reset
         body_frame_buffer_db = []
 
+
+# Function to help send OBD data to firestore database
+# Each second's OBD frame data will be stored in the format below
+# obd_drive_sessions/<sessionId>/obd_drive_session_classifications/<timestamp>
+def save_obd_frames_to_firestore(sessionId):
+    """
+    Saves OBD data to Firestore under a document named after sessionId
+    in the 'obd_drive_sessions' collection. Each document contains all available OBD fields.
+    """
+    
+    global obd_frame_buffer_db
+    
+    if len(obd_frame_buffer_db) >= NUM_SECONDS_BEFORE_STORE_IN_DB:
+        logger.info("OBD_STREAM: Saving OBD frames to Firestore")
+        
+        # Copy the buffer so we don't mutate it while writing
+        frame_data = list(obd_frame_buffer_db)
+        
+        # 1) Create or retrieve the doc for this session ID
+        doc_ref = obd_drive_sessions.document(str(sessionId))
+        doc_snapshot = doc_ref.get()
+        
+        if not doc_snapshot.exists:
+            # If doc does not exist, create it
+            doc_ref.set(
+                {"session_id": str(sessionId), "created_at": firestore.SERVER_TIMESTAMP}
+            )
+            logger.info(
+                f"OBD_STREAM: Created new session doc for session ID {sessionId}"
+            )
+            
+        # 2) Write each (timestamp, classification) as a doc in 'obd_drive_session_classifications'
+        db_start_time = time.time()
+
+        for record in frame_data:
+            ts = record["timestamp"]  # integer second or unique timestamp
+            frame_speed = record["speed"] # latest speed data from OBD
+            frame_rpm = record["rpm"] # latest RPM data from OBD
+            frame_dtc = record["dtc"] # latest Diagnostic Trouble Codes (DTC) from OBD
+
+            # Document ID = timestamp; store both timestamp and classification
+            doc_ref.collection("obd_drive_session_classifications").document(
+                str(ts)
+            ).set(
+                {
+                    "timestamp": ts,
+                    "speed": frame_speed,
+                    "rpm": frame_rpm,
+                    "dtc": frame_dtc
+                }
+            )
+
+        db_time = (time.time() - db_start_time) * 1000  # milliseconds
+        logger.info(f"OBD_STREAM: Database save completed in {db_time:.2f}ms")
+        
+        # 3) Clear the local buffer and reset
+        obd_frame_buffer_db = []
+
+def process_obd_data(data, sessionId):
+    """
+    Process incoming OBD data and store it in the buffer for the current second.
+    When the second changes, finalize the previous second's data.
+    """
+    global last_processed_second, obd_frame_buffer_db
+
+    # Get the current second from the timestamp
+    current_second = int(data["timestamp"])
+
+    # If this is a new second, process the previous second's data
+    if last_processed_second is not None and current_second != last_processed_second:
+        # Create a record with all available OBD fields
+        record = {"timestamp": last_processed_second}
+        
+        # Add all available fields from the data
+        for field in OBD_FIELDS:
+            if field in data and data[field] is not None:
+                record[field] = data[field]
+
+        # Add to buffer and possibly trigger a database write
+        if len(obd_frame_buffer_db) < NUM_SECONDS_BEFORE_STORE_IN_DB:
+            obd_frame_buffer_db.append(record)
+        if len(obd_frame_buffer_db) >= NUM_SECONDS_BEFORE_STORE_IN_DB:
+            save_obd_frames_to_firestore(sessionId)
+
+    # Update the last processed second
+    last_processed_second = current_second
 
 # Face stream helper function to compute Eye Aspect Ratio (EAR)
 # Formula taken from https://pmc.ncbi.nlm.nih.gov/articles/PMC11398282/
@@ -876,7 +974,7 @@ def process_stream_body(url, sessionId):
 # Important because we need both streams to have the same session ID
 @stream_viewer.route("/both_streams_start")
 def both_streams_start():
-    global body_processing_thread, face_processing_thread
+    global body_processing_thread, face_processing_thread, current_session_id
 
     if body_processing_thread and body_processing_thread.is_alive():
         return make_response("Body processing thread already running", 409)
@@ -885,6 +983,7 @@ def both_streams_start():
         return make_response("Face processing thread already running", 409)
 
     sessionId = uuid.uuid4()
+    current_session_id = sessionId
     body_processing_thread = threading.Thread(
         target=process_stream_body, args=(BODY_STREAM_URL, sessionId)
     )
@@ -1094,10 +1193,14 @@ def body_stream_view():
 # Store the last second we saved with somewhere globally to know if it changed
 @stream_viewer.route("/obd_data", methods=["POST"])
 def receive_obd_data():
-    global obd_data_buffer
+    global obd_data_buffer, current_session_id
     try:
         data = request.get_json()
         required_fields = ["speed", "rpm", "timestamp"]
+
+        if not current_session_id:
+            return make_response("No active session found", 400)
+        
         if all(field in data for field in required_fields):
             if obd_data_buffer.full():
                 obd_data_buffer.get_nowait()
@@ -1105,6 +1208,7 @@ def receive_obd_data():
                 {
                     "speed": data["speed"],
                     "rpm": data["rpm"],
+                    "dtc": data["dtc"],
                     "timestamp": data["timestamp"],
                     # 'engine_rpm': data['engine_rpm'],
                     # 'vehicle_speed': data['vehicle_speed'],
@@ -1125,7 +1229,17 @@ def receive_obd_data():
                     # 'security_status': data['security_status']
                 }
             )
-            return make_response("Data received", 200)
+            
+            process_obd_data(data, current_session_id)
+            
+            return make_response("Data received and processed", 200)
+        else:
+            if "timestamp" not in data:
+                return make_response("Missing timestamp field", 400)
+            
+            if not any(field in data for field in OBD_FIELDS):
+                return make_response("No OBD data fields found", 400)
+            
         return make_response("Missing required fields", 400)
     except Exception as e:
         logger.error(f"Error processing OBD data: {str(e)}")
