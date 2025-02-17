@@ -1,0 +1,57 @@
+.pageContainer {
+}
+
+.cameraContainer {
+  display: flex;
+  flex-direction: row;
+  justify-content: space-evenly;
+}
+
+.liveClasBox {
+  display: flex;
+  flex-direction: row;
+  gap: 8px;
+  padding: 4px 8px;
+  border: 1px solid gray;
+  justify-content: space-evenly;
+  flex: 1 1 0px;
+}
+
+.liveClasContainer {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  border: 2px solid gray;
+  padding: 16px;
+  flex: 1 1 0px;
+  height: 450px;
+  overflow-y: auto;
+}
+
+.listContainer {
+  display: flex;
+  flex-direction: row;
+  gap: 32px;
+  justify-content: space-between;
+}
+
+.cameraWrapper {
+  width: 1300px;
+  height: 800px;
+  border-radius: 16px;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  z-index: 1;
+  padding: 1px;
+}
+
+.cameraContainer {
+  margin-bottom: 64px;
+}
+
+.video {
+  height: 100%;
+  width: 100%;
+  border-radius: 16px;
+}
