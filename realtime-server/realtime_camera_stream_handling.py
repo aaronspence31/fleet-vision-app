@@ -38,7 +38,7 @@ CLIP_INPUT_SIZE = 224
 CLIP_MODEL_PATH_BODY = "dmd29_vitbl14-hypc_429_1000_ft.pkl"
 EAR_THRESHOLD = 0.25
 MAR_THRESHOLD = 0.28
-NUM_SECONDS_BEFORE_STORE_IN_DB = 2
+NUM_SECONDS_BEFORE_STORE_IN_DB = 3
 
 # Setup cv2 classifiers to detect a person in the frame
 faceCascade = cv2.CascadeClassifier(
@@ -195,6 +195,24 @@ def compute_MAR(mouth):
 # Mouth State Predictions are Mouth Open, Mouth Closed or Unknown
 # Used paper here https://pmc.ncbi.nlm.nih.gov/articles/PMC11398282/
 def process_stream_face(url, sessionId):
+    """
+    Main face stream processing function.
+
+    This function reads video frames from the given `url` (e.g., an ESP32 camera),
+    detects faces and facial landmarks (eyes/mouth), then calculates:
+      1) Eye Aspect Ratio (EAR) to classify the eyes as 'Open' or 'Closed'
+      2) Mouth Aspect Ratio (MAR) to classify the mouth as 'Open' or 'Closed'
+
+    The function logs the timing of each step (frame capture, face detection, landmark
+    detection, EAR/MAR calculation, encoding) for every frame. It also buffers these
+    classifications each second and performs a majority vote to yield a final
+    (Eyes, Mouth) classification for that second. That final classification is stored
+    for Firestore insertion and also pushed to the front-end once per second.
+
+    Args:
+        url (str): The camera streaming endpoint.
+        sessionId (str): A unique session identifier for storing results in Firestore.
+    """
     global frame_count_face, face_stream_data_buffer, face_thread_kill
     global face_frame_buffer_db, face_stream_cursecond_buffer
 
@@ -203,32 +221,37 @@ def process_stream_face(url, sessionId):
 
     from collections import Counter
 
-    # Track "last second" for per-second majority
+    # Track the integer second for majority-voting logic
     last_second = None
 
     while not face_thread_kill:
+        # Record the start time for timing the entire pipeline
         pipeline_start_time = time.time()
 
-        # Initialize timing variables
+        # Initialize timing placeholders for each step
         frame_capture_time = 0
         face_detect_time = 0
         dlib_time = 0
         ear_time = 0
         mar_time = 0
         encoding_time = 0
-        db_time = 0
 
-        # 1) Determine the current integer second
+        # Placeholder for DB writes, which only occur once per second
+        db_time_placeholder = 0
+
+        # Determine the current integer second
         now_second = int(time.time())
 
-        # 2) If we have moved to a new second, finalize the previous second
+        # ------------------------------------------------------------------
+        # 1) If we've rolled over to a new second, finalize the old second
+        # ------------------------------------------------------------------
         if last_second is not None and now_second != last_second:
             if len(face_stream_cursecond_buffer) > 0:
-                # We have accumulated eye/mouth classifications for the old second in face_stream_cursecond_buffer
+                # Gather the per-frame classifications from the previous second
                 eye_labels = [item["eye"] for item in face_stream_cursecond_buffer]
                 mouth_labels = [item["mouth"] for item in face_stream_cursecond_buffer]
 
-                # Majority vote for eye
+                # Majority vote for eyes
                 eye_counts = Counter(eye_labels)
                 majority_eye, _ = eye_counts.most_common(1)[0]
 
@@ -236,9 +259,12 @@ def process_stream_face(url, sessionId):
                 mouth_counts = Counter(mouth_labels)
                 majority_mouth, _ = mouth_counts.most_common(1)[0]
 
-                # Build a record for DB
+                # Time how long DB operations take (if we do them)
+                db_start_time = time.time()
+
+                # Build a record for Firestore
                 record = {
-                    "timestamp": last_second,  # integer second
+                    "timestamp": last_second,
                     "eye_classification": majority_eye,
                     "mouth_classification": majority_mouth,
                 }
@@ -249,39 +275,47 @@ def process_stream_face(url, sessionId):
                 if len(face_frame_buffer_db) >= NUM_SECONDS_BEFORE_STORE_IN_DB:
                     save_face_frames_to_firestore(sessionId)
 
-                # Optionally push a “final” entry to the front-end with the aggregated classification
-                # and a representative image. We do the same approach as the body stream: pop one item
-                # from the queue if it is full, so we can reuse that item’s image.
+                # Measure the DB operation time
+                db_elapsed = (time.time() - db_start_time) * 1000
+
+                # Optionally push a final entry to the front-end with the aggregated classification
                 current_entry = None
                 if face_stream_data_buffer.full():
                     current_entry = face_stream_data_buffer.get_nowait()
 
-                # If we got something, use its image; otherwise None
-                final_image = current_entry.get("image") if current_entry else None
-
+                final_image = current_entry["image"] if current_entry else None
                 face_stream_data_buffer.put(
                     {
                         "image": final_image,
                         "eye_prediction": majority_eye,
                         "mouth_prediction": majority_mouth,
-                        "ear_score": None,  # or best guess from aggregator if you like
-                        "mar_score": None,
+                        "ear_score": None,  # optional
+                        "mar_score": None,  # optional
                         "frame_number": None,
                         "timestamp": last_second,
                         "processing_time": None,
                     }
                 )
 
-                # Clear the buffer for the old second
+                # Clear out the old second’s buffer
                 face_stream_cursecond_buffer.clear()
 
-        # 3) Update last_second
+                # Log that we've finalized this second
+                logger.debug(
+                    f"FACE_STREAM: Finalizing second {last_second}, "
+                    f"Eyes='{majority_eye}', Mouth='{majority_mouth}', "
+                    f"DB write time={db_elapsed:.2f}ms"
+                )
+
+        # Initialize last_second if needed, or update it if the second changed
         if last_second is None:
             last_second = now_second
         elif now_second != last_second:
             last_second = now_second
 
-        # 4) Capture frame
+        # ------------------------------------------------------------------
+        # 2) Per-frame processing: capture, detection, landmark, etc.
+        # ------------------------------------------------------------------
         capture_start = time.time()
         success, frame = cap.read()
         frame_capture_time = (time.time() - capture_start) * 1000
@@ -291,24 +325,26 @@ def process_stream_face(url, sessionId):
             time.sleep(0.1)
             continue
 
+        # Increment the frame count
         frame_count_face += 1
 
-        # Default
+        # Default classifications/metrics
         eye_classification = "Unknown"
         mouth_classification = "Unknown"
         ear_score = None
         mar_score = None
 
-        # 5) Detect face(s)
+        # Convert to grayscale and detect faces
         face_detect_start = time.time()
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
         faces = faceCascade.detectMultiScale(gray, 1.3, 1)
         face_detect_time = (time.time() - face_detect_start) * 1000
 
+        # Copy for drawing/visualization
         frame_with_boxes = frame.copy()
 
-        # If no face, we draw "Unknown"
         if len(faces) == 0:
+            # If no face found, we label "Unknown"
             font = cv2.FONT_HERSHEY_SIMPLEX
             font_scale = 0.8
             thickness = 2
@@ -329,30 +365,35 @@ def process_stream_face(url, sessionId):
                 thickness,
             )
         else:
-            # Find largest face
-            largest_face = max(faces, key=lambda face: face[2] * face[3])
+            # Identify largest face
+            largest_face = max(faces, key=lambda fc: fc[2] * fc[3])
             fx, fy, fw, fh = largest_face
             cv2.rectangle(
                 frame_with_boxes, (fx, fy), (fx + fw, fy + fh), (255, 0, 0), 2
             )
 
-            # 6) Landmark detection (eyes, mouth, etc.)
+            # Landmark detection for eyes/mouth
             dlib_start = time.time()
             dlib_rect = dlib.rectangle(int(fx), int(fy), int(fx + fw), int(fy + fh))
             shape = landmark_predictor(gray, dlib_rect)
             shape_np = face_utils.shape_to_np(shape)
             dlib_time = (time.time() - dlib_start) * 1000
 
-            # Eye Aspect Ratio
+            # (a) Eye Aspect Ratio
             ear_start = time.time()
             left_eye_pts = shape_np[36:42]
             right_eye_pts = shape_np[42:48]
+
+            # Draw small dots on each eye landmark
             for x, y in np.concatenate((left_eye_pts, right_eye_pts)):
                 cv2.circle(frame_with_boxes, (x, y), 1, (255, 255, 0), -1)
+
             left_ear = compute_EAR(left_eye_pts)
             right_ear = compute_EAR(right_eye_pts)
             avg_ear = (left_ear + right_ear) / 2.0
             ear_score = avg_ear
+
+            # Classify eyes
             eye_classification = (
                 "Eyes Open" if avg_ear > EAR_THRESHOLD else "Eyes Closed"
             )
@@ -365,7 +406,7 @@ def process_stream_face(url, sessionId):
                 (0, 255, 0) if eye_classification == "Eyes Open" else (0, 0, 255)
             )
             cv2.rectangle(frame_with_boxes, (ex, ey), (ex + ew, ey + eh), eye_color, 2)
-            eye_text = f"{eye_classification} ({ear_score:.2f})"
+            eye_text = f"{eye_classification} ({avg_ear:.2f})"
             cv2.putText(
                 frame_with_boxes,
                 eye_text,
@@ -376,18 +417,21 @@ def process_stream_face(url, sessionId):
                 2,
             )
 
-            # Mouth Aspect Ratio
+            # (b) Mouth Aspect Ratio
             mar_start = time.time()
             mouth_pts = shape_np[60:68]
             mar_score = compute_MAR(mouth_pts)
+
+            # Classify mouth
             mouth_classification = (
                 "Mouth Open" if mar_score > MAR_THRESHOLD else "Mouth Closed"
             )
             mar_time = (time.time() - mar_start) * 1000
 
-            # Draw mouth landmarks
+            # Draw small dots on each mouth landmark
             for mx, my in mouth_pts:
                 cv2.circle(frame_with_boxes, (mx, my), 1, (255, 255, 0), -1)
+
             (mx, my, mw, mh) = cv2.boundingRect(mouth_pts)
             mouth_color = (
                 (0, 255, 0) if mouth_classification == "Mouth Closed" else (0, 0, 255)
@@ -406,14 +450,13 @@ def process_stream_face(url, sessionId):
                 2,
             )
 
-        # 7) Encode frame for streaming
+        # Encode frame for streaming
         encode_start = time.time()
         _, buffer = cv2.imencode(".jpg", frame_with_boxes)
         frame_base64 = base64.b64encode(buffer).decode("utf-8")
         encoding_time = (time.time() - encode_start) * 1000
 
-        # 8) Store the immediate (eye, mouth) classification for majority voting
-        #    but do NOT push the final classification to the front-end yet.
+        # 8) Accumulate these classifications to do majority voting at the second boundary
         face_stream_cursecond_buffer.append(
             {
                 "eye": eye_classification,
@@ -421,29 +464,28 @@ def process_stream_face(url, sessionId):
             }
         )
 
-        # 9) Put partial entry to the queue with classification = None
-        #    so the front-end sees the live image, but no final classification.
+        # 9) Send partial data (image + placeholder classification) to the front-end
         if face_stream_data_buffer.full():
             face_stream_data_buffer.get_nowait()
 
         total_time = (time.time() - pipeline_start_time) * 1000
-
         face_stream_data_buffer.put(
             {
                 "image": frame_base64,
-                "eye_prediction": None,  # hide classification until second ends
-                "mouth_prediction": None,  # hide classification
-                "ear_score": ear_score,  # optional to show or hide
-                "mar_score": mar_score,
+                "eye_prediction": None,  # final classification done only once per second
+                "mouth_prediction": None,  # final classification
+                "ear_score": ear_score,  # optional
+                "mar_score": mar_score,  # optional
                 "frame_number": frame_count_face,
                 "timestamp": now_second,
                 "processing_time": total_time,
             }
         )
 
-        # Log timing
-        # (We've removed the direct DB logic from each frame,
-        #  as we only store once per second in the aggregator approach.)
+        # ----------------------------------------------------------------
+        # 10) Per-frame logging
+        # ----------------------------------------------------------------
+        # We keep a DB time placeholder since DB writes only happen once per second.
         timing_log = (
             f"FACE_STREAM: Frame {frame_count_face} pipeline:\n"
             f"  - Frame Capture: {frame_capture_time:.2f}ms\n"
@@ -461,12 +503,13 @@ def process_stream_face(url, sessionId):
                 f"  - Eye Classification: {eye_classification}\n"
                 f"  - Mouth Classification: {mouth_classification}\n"
             )
+        # Use a placeholder for DB time, since we only write to Firestore at the second boundary
         timing_log += (
             f"  - Frame Encoding: {encoding_time:.2f}ms\n"
-            f"  - DB Time: {db_time:.2f}ms\n"
+            f"  - DB Time (placeholder): {db_time_placeholder:.2f}ms\n"
             f"  - Total Pipeline: {total_time:.2f}ms\n"
         )
-        logger.info(timing_log)
+        logger.debug(timing_log)
 
 
 # Body stream helper function for saving to DB
@@ -671,7 +714,7 @@ def process_stream_body(url, sessionId):
                 body_stream_cursecond_buffer.clear()
 
                 # Log that we finalized this second
-                logger.info(
+                logger.debug(
                     f"BODY_STREAM: Finalizing second {last_second}, "
                     f"majority label='{majority_label}', DB write time={db_elapsed:.2f}ms"
                 )
