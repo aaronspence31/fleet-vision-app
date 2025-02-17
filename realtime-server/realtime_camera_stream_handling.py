@@ -976,7 +976,7 @@ def process_stream_body(url, sessionId):
 
 
 # Start both stream processing functions as part of the same session
-@realtime_camera_stream_handling.route("/both_streams_start")
+@realtime_camera_stream_handling.route("/both_camera_streams_start")
 def both_streams_start():
     global body_processing_thread, face_processing_thread
 
@@ -1003,7 +1003,7 @@ def both_streams_start():
 
 
 # Attempt to stop both stream processing functions
-@realtime_camera_stream_handling.route("/both_streams_stop")
+@realtime_camera_stream_handling.route("/both_camera_streams_stop")
 def both_streams_stop():
     global body_processing_thread, body_thread_kill, face_processing_thread, face_thread_kill
 
