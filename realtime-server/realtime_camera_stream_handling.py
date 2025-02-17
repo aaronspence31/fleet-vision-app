@@ -38,7 +38,7 @@ CLIP_INPUT_SIZE = 224
 CLIP_MODEL_PATH_BODY = "dmd29_vitbl14-hypc_429_1000_ft.pkl"
 EAR_THRESHOLD = 0.25
 MAR_THRESHOLD = 0.28
-NUM_SECONDS_BEFORE_STORE_IN_DB = 3
+NUM_SECONDS_BEFORE_STORE_IN_DB = 1
 
 # Setup cv2 classifiers to detect a person in the frame
 faceCascade = cv2.CascadeClassifier(
@@ -130,28 +130,38 @@ def save_face_frames_to_firestore(sessionId):
     """
     global face_frame_buffer_db
 
-    db_start_time = time.time()
-    logger.debug("FACE_STREAM: Saving face frames to Firestore")
+    # Record the overall function start
+    overall_start_time = time.time()
 
-    # Copy the buffer so we don't mutate it while writing
+    logger.debug("FACE_STREAM: Beginning save_face_frames_to_firestore")
+
+    # Step 1) Copy the local buffer so we don't mutate it while writing
+    copy_start_time = time.time()
     frame_data = list(face_frame_buffer_db)
+    copy_time = (time.time() - copy_start_time) * 1000
 
-    # 1) Create or retrieve the doc for this session ID
+    # Step 2) Create or retrieve the Firestore doc for this session ID
+    doc_check_start_time = time.time()
     doc_ref = face_drive_sessions.document(str(sessionId))
     doc_snapshot = doc_ref.get()
+    doc_check_time = (time.time() - doc_check_start_time) * 1000
 
+    doc_create_start_time = None
+    doc_create_time = 0
     if not doc_snapshot.exists:
-        # If doc does not exist, create it
+        doc_create_start_time = time.time()
         doc_ref.set(
             {"session_id": str(sessionId), "created_at": firestore.SERVER_TIMESTAMP}
         )
+        doc_create_time = (time.time() - doc_create_start_time) * 1000
         logger.debug(f"FACE_STREAM: Created new session doc for session ID {sessionId}")
 
-    # 2) Write each (timestamp, classification) as a doc in 'face_drive_session_classifications'
+    # Step 3) Write each (timestamp, classification) as a doc in 'face_drive_session_classifications'
+    write_start_time = time.time()
     for record in frame_data:
         ts = record["timestamp"]  # integer second or unique timestamp
-        eye_label = record["eye_classification"]  # eye classification
-        mouth_label = record["mouth_classification"]  # mouth classification
+        eye_label = record["eye_classification"]
+        mouth_label = record["mouth_classification"]
 
         # Document ID = timestamp; store both timestamp and classifications
         doc_ref.collection("face_drive_session_classifications").document(str(ts)).set(
@@ -161,11 +171,20 @@ def save_face_frames_to_firestore(sessionId):
                 "mouth_classification": mouth_label,
             }
         )
+    write_time = (time.time() - write_start_time) * 1000
 
-    db_time = (time.time() - db_start_time) * 1000  # milliseconds
-    logger.info(f"FACE_STREAM: Database save completed in {db_time:.2f}ms")
+    # Step 4) Log the total time
+    overall_time = (time.time() - overall_start_time) * 1000
+    logger.debug(
+        "FACE_STREAM: Firestore save completed\n"
+        f"  - Copied buffer: {copy_time:.2f}ms\n"
+        f"  - Doc check: {doc_check_time:.2f}ms\n"
+        f"  - Doc create (if needed): {doc_create_time:.2f}ms\n"
+        f"  - Writing {len(frame_data)} records: {write_time:.2f}ms\n"
+        f"  - Total function time: {overall_time:.2f}ms"
+    )
 
-    # 3) Clear the local buffer and reset
+    # Step 5) Clear the local buffer
     face_frame_buffer_db = []
 
 
@@ -215,6 +234,10 @@ def process_stream_face(url, sessionId):
     """
     global frame_count_face, face_stream_data_buffer, face_thread_kill
     global face_frame_buffer_db, face_stream_cursecond_buffer
+
+    logger.info(
+        f"FACE_STREAM: Starting face stream processing with sessionId: {sessionId} and ESP32 URL: {url}"
+    )
 
     cap = cv2.VideoCapture(url)
     cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
@@ -525,37 +548,59 @@ def save_body_frames_to_firestore(sessionId):
     """
     global body_frame_buffer_db
 
-    db_start_time = time.time()
-    logger.debug("BODY_STREAM: Saving body frames to Firestore")
+    # Record the overall function start time
+    overall_start_time = time.time()
 
-    # Copy the buffer so we don't mutate it while writing
+    logger.debug("BODY_STREAM: Beginning save_body_frames_to_firestore")
+
+    # Step 1) Copy the local buffer so we don't mutate it while writing
+    copy_start_time = time.time()
     frame_data = list(body_frame_buffer_db)
+    copy_time = (time.time() - copy_start_time) * 1000
 
-    # 1) Create or retrieve the doc for this session ID
+    # Step 2) Create or retrieve the doc for this session ID
+    doc_check_start_time = time.time()
     doc_ref = body_drive_sessions.document(str(sessionId))
     doc_snapshot = doc_ref.get()
+    doc_check_time = (time.time() - doc_check_start_time) * 1000
 
+    # Only create the doc if it doesn't exist
+    doc_create_start_time = None
+    doc_create_time = 0
     if not doc_snapshot.exists:
-        # If doc does not exist, create it
+        doc_create_start_time = time.time()
         doc_ref.set(
             {"session_id": str(sessionId), "created_at": firestore.SERVER_TIMESTAMP}
         )
+        doc_create_time = (time.time() - doc_create_start_time) * 1000
         logger.debug(f"BODY_STREAM: Created new session doc for session ID {sessionId}")
 
-    # 2) Write each (timestamp, classification) as a doc in 'body_drive_session_classifications'
+    # Step 3) Write each (timestamp, classification) as a doc in 'body_drive_session_classifications'
+    write_start_time = time.time()
     for record in frame_data:
-        ts = record["timestamp"]  # integer second or unique timestamp
-        label = record["classification"]  # your final classification
+        ts = record["timestamp"]
+        label = record["classification"]
 
         # Document ID = timestamp; store both timestamp and classification
         doc_ref.collection("body_drive_session_classifications").document(str(ts)).set(
             {"timestamp": ts, "classification": label}
         )
+    write_time = (time.time() - write_start_time) * 1000
 
-    db_time = (time.time() - db_start_time) * 1000  # milliseconds
-    logger.info(f"BODY_STREAM: Database save completed in {db_time:.2f}ms")
+    # Calculate the overall function time
+    overall_time = (time.time() - overall_start_time) * 1000
 
-    # 3) Clear the local buffer and reset
+    # Detailed log showing each step's duration
+    logger.debug(
+        "BODY_STREAM: Firestore save completed\n"
+        f"  - Copied buffer: {copy_time:.2f}ms\n"
+        f"  - Doc check: {doc_check_time:.2f}ms\n"
+        f"  - Doc create (if needed): {doc_create_time:.2f}ms\n"
+        f"  - Writing {len(frame_data)} records: {write_time:.2f}ms\n"
+        f"  - Total function time: {overall_time:.2f}ms"
+    )
+
+    # Step 4) Clear the local buffer
     body_frame_buffer_db = []
 
 
@@ -630,6 +675,10 @@ def process_stream_body(url, sessionId):
     global frame_count_body, clip_model, clip_preprocess, clip_classifier_body
     global body_stream_data_buffer, body_frame_buffer_db, body_thread_kill
     global body_stream_cursecond_buffer
+
+    logger.info(
+        f"BODY_STREAM: Starting body stream processing with sessionId: {sessionId} and ESP32 URL: {url}"
+    )
 
     # Ensure CLIP model and components are initialized before proceeding
     if not all([clip_model, clip_preprocess, clip_classifier_body]):
