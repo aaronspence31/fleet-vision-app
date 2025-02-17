@@ -1002,11 +1002,12 @@ def both_streams_start():
     )
 
 
-# Attempt to stop both processing functions
+# Attempt to stop both stream processing functions
 @realtime_camera_stream_handling.route("/both_streams_stop")
 def both_streams_stop():
     global body_processing_thread, body_thread_kill, face_processing_thread, face_thread_kill
 
+    logger.debug("Starting to stop both processing threads")
     errors = []
     success_messages = []
 
@@ -1014,11 +1015,13 @@ def both_streams_stop():
     try:
         if body_processing_thread:
             if body_processing_thread.is_alive():
+                logger.debug("Stopping body processing thread")
                 body_thread_kill = True
                 body_processing_thread.join(timeout=5.0)
 
                 if body_processing_thread.is_alive():
                     errors.append("Failed to stop body thread within timeout")
+                    logger.error("Failed to stop body thread within timeout")
                 else:
                     success_messages.append("Body processing stopped successfully")
                     body_thread_kill = False
@@ -1029,18 +1032,20 @@ def both_streams_stop():
         else:
             success_messages.append("Body thread not started")
     except Exception as e:
-        errors.append(f"Error stopping body thread: {str(e)}")
         logger.error(f"Error stopping body processing thread: {str(e)}")
+        errors.append(f"Error stopping body thread: {str(e)}")
 
     # Stop face processing thread
     try:
         if face_processing_thread:
             if face_processing_thread.is_alive():
+                logger.debug("Stopping face processing thread")
                 face_thread_kill = True
                 face_processing_thread.join(timeout=5.0)
 
                 if face_processing_thread.is_alive():
                     errors.append("Failed to stop face thread within timeout")
+                    logger.error("Failed to stop face thread within timeout")
                 else:
                     success_messages.append("Face processing stopped successfully")
                     face_thread_kill = False
@@ -1051,19 +1056,21 @@ def both_streams_stop():
         else:
             success_messages.append("Face thread not started")
     except Exception as e:
-        errors.append(f"Error stopping face thread: {str(e)}")
         logger.error(f"Error stopping face processing thread: {str(e)}")
+        errors.append(f"Error stopping face thread: {str(e)}")
 
     # Handle response
     if errors:
+        status_code = 500 if len(errors) == 2 else 207
+        logger.error(f"Errors stopping threads: {errors}")
         return make_response(
-            {"errors": errors, "successes": success_messages},
-            500 if len(errors) == 2 else 207,
-        )  # 207 Multi-Status if partial success
+            {"errors": errors, "successes": success_messages}, status_code
+        )
 
     if not success_messages:
         return make_response("No processing threads were running", 200)
 
+    logger.info("Successfully stopped all threads")
     return make_response(
         {"message": "All streams stopped successfully", "details": success_messages},
         200,
