@@ -545,7 +545,7 @@ def detect_person_in_frame(frame, scale_factor=1.2, min_neighbors=1):
     )
     if len(profile_faces) > 0:
         detection_time = (time.time() - start_time) * 1000
-        logger.info(
+        logger.debug(
             f"BODY_STREAM: Person detection completed in {detection_time:.2f}ms (profile face detected)"
         )
         return True
@@ -555,7 +555,7 @@ def detect_person_in_frame(frame, scale_factor=1.2, min_neighbors=1):
     )
     if len(upper_bodies) > 0:
         detection_time = (time.time() - start_time) * 1000
-        logger.info(
+        logger.debug(
             f"BODY_STREAM: Person detection completed in {detection_time:.2f}ms (upper body detected)"
         )
         return True
@@ -564,7 +564,7 @@ def detect_person_in_frame(frame, scale_factor=1.2, min_neighbors=1):
         gray, scaleFactor=scale_factor, minNeighbors=min_neighbors
     )
     detection_time = (time.time() - start_time) * 1000
-    logger.info(
+    logger.debug(
         f"BODY_STREAM: Person detection completed in {detection_time:.2f}ms (Person {'detected' if len(faces) > 0 else 'not detected'})"
     )
     return len(faces) > 0
