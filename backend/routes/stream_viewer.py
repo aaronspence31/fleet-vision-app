@@ -30,10 +30,18 @@ logger = logging.getLogger(__name__)
 obd_data_buffer = Queue(maxsize=1)
 
 OBD_FIELDS = [
+    'timestamp',
     'speed',
     'rpm',
-    'dtc',
-    'timestamp'
+    'check_engine_on',
+    'num_dtc_codes',
+    'dtc_codes',
+    'warning_lights',
+    # Optional warning light system fields
+    'check_engine',
+    'transmission',
+    'abs',
+    'airbag'
 ]
 
 # Constants
@@ -278,26 +286,28 @@ def save_obd_frames_to_firestore(sessionId):
                 f"OBD_STREAM: Created new session doc for session ID {sessionId}"
             )
             
-        # 2) Write each (timestamp, classification) as a doc in 'obd_drive_session_classifications'
+        # 2) Write each entry as a doc in 'obd_drive_session_classifications'
         db_start_time = time.time()
 
         for record in frame_data:
             ts = record["timestamp"]  # integer second or unique timestamp
-            frame_speed = record["speed"] # latest speed data from OBD
-            frame_rpm = record["rpm"] # latest RPM data from OBD
-            frame_dtc = record["dtc"] # latest Diagnostic Trouble Codes (DTC) from OBD
+            
+            doc_data = {
+                "timestamp": ts, 
+                "speed": record.get("speed", -1),
+                "rpm": record.get("rpm", -1),
+                "check_engine_on": record.get("check_engine_on", False),
+                "num_dtc_codes": record.get("num_dtc_codes", 0)
+            }
+            
+            if "dtc_codes" in record:
+                doc_data["dtc_codes"] = record["dtc_codes"]
+                
+            if "warning_lights" in record:
+                doc_data["warning_lights"] = record["warning_lights"]
 
-            # Document ID = timestamp; store both timestamp and classification
-            doc_ref.collection("obd_drive_session_classifications").document(
-                str(ts)
-            ).set(
-                {
-                    "timestamp": ts,
-                    "speed": frame_speed,
-                    "rpm": frame_rpm,
-                    "dtc": frame_dtc
-                }
-            )
+            # Document ID = timestamp;
+            doc_ref.collection("obd_drive_session_classifications").document(str(ts)).set(doc_data)
 
         db_time = (time.time() - db_start_time) * 1000  # milliseconds
         logger.info(f"OBD_STREAM: Database save completed in {db_time:.2f}ms")
@@ -318,12 +328,24 @@ def process_obd_data(data, sessionId):
     # If this is a new second, process the previous second's data
     if last_processed_second is not None and current_second != last_processed_second:
         # Create a record with all available OBD fields
-        record = {"timestamp": last_processed_second}
+        record = {
+            "timestamp": last_processed_second,
+            "speed": data.get("speed", -1),
+            "rpm": data.get("rpm", -1),
+            "check_engine_on": data.get("check_engine_on", False),
+            "num_dtc_codes": data.get("num_dtc_codes", 0)
+        }
+        
+        if "dtc_codes" in data:
+            record["dtc_codes"] = data["dtc_codes"]
+            
+        if "warning_lights" in data:
+            record["warning_lights"] = data["warning_lights"]
         
         # Add all available fields from the data
-        for field in OBD_FIELDS:
-            if field in data and data[field] is not None:
-                record[field] = data[field]
+        # for field in OBD_FIELDS:
+        #     if field in data and data[field] is not None:
+        #         record[field] = data[field]
 
         # Add to buffer and possibly trigger a database write
         if len(obd_frame_buffer_db) < NUM_SECONDS_BEFORE_STORE_IN_DB:
@@ -1202,43 +1224,39 @@ def receive_obd_data():
             return make_response("No active session found", 400)
         
         if all(field in data for field in required_fields):
+            # Process data for live view
+            view_data = {
+                "timestamp": data["timestamp"],
+                "speed": data.get("speed", -1),
+                "rpm": data.get("rpm", -1)
+            }
+            
+            if "check_engine_on" in data:
+                view_data["check_engine_on"] = data["check_engine_on"]
+                
+            if "num_dtc_codes" in data:
+                view_data["num_dtc_codes"] = data["num_dtc_codes"]
+                
+            if "dtc_codes" in data:
+                view_data["dtc_codes"] = data["dtc_codes"]
+            
+            # Update live view buffer
             if obd_data_buffer.full():
                 obd_data_buffer.get_nowait()
-            obd_data_buffer.put(
-                {
-                    "speed": data["speed"],
-                    "rpm": data["rpm"],
-                    "dtc": data["dtc"],
-                    "timestamp": data["timestamp"],
-                    # 'engine_rpm': data['engine_rpm'],
-                    # 'vehicle_speed': data['vehicle_speed'],
-                    # 'coolant_temp': data['coolant_temp'],
-                    # 'fuel_status': data['fuel_status'],
-                    # 'intake_air_temp': data['intake_air_temp'],
-                    # 'mass_air_flow': data['mass_air_flow'],
-                    # 'engine_load': data['engine_load'],
-                    # 'fuel_rail_pressure': data['fuel_rail_pressure'],
-                    # 'fuel_rail_gauge': data['fuel_rail_gauge'],
-                    # 'fuel_level_input': data['fuel_level_input'],
-                    # 'barometric_pressure': data['barometric_pressure'],
-                    # 'distance_dtc': data['distance_dtc'],
-                    # 'distance_mil': data['distance_mil'],
-                    # 'trans_fluid_temp': data['trans_fluid_temp'],
-                    # 'trans_gear_ratio': data['trans_gear_ratio'],
-                    # 'wheel_speed': data['wheel_speed'],
-                    # 'security_status': data['security_status']
-                }
-            )
+            obd_data_buffer.put(view_data)
             
             process_obd_data(data, current_session_id)
             
             return make_response("Data received and processed", 200)
         else:
             if "timestamp" not in data:
-                return make_response("Missing timestamp field", 400)
+                return make_response("Missing 'timestamp' field", 400)
             
-            if not any(field in data for field in OBD_FIELDS):
-                return make_response("No OBD data fields found", 400)
+            if "speed" not in data:
+                return make_response("Missing 'speed' field", 400)
+            
+            if "rpm" not in data:
+                return make_response("Missing 'rpm' field", 400)
             
         return make_response("Missing required fields", 400)
     except Exception as e:
