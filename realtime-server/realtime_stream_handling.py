@@ -1562,10 +1562,10 @@ def stop_drive_session():
         )
 
     if not success_messages:
-        return make_response("No processing threads were running", 200)
+        return make_response("No session started, no threads to stop", 200)
 
     logger.info("Successfully stopped all threads")
     return make_response(
-        {"message": "All streams stopped successfully", "details": success_messages},
+        {"message": "Successfully stopped drive session", "details": success_messages},
         200,
     )
