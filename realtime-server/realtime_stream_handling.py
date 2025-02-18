@@ -117,14 +117,14 @@ body_stream_index_to_label = {
 
 # Stream processing buffers, thread management variables and counters
 # Setup buffers to hold the predictions data for all frames in the current second
-face_stream_cursecond_buffer = []
-body_stream_cursecond_buffer = []
+face_stream_cursecond_buffer = Queue()
+body_stream_cursecond_buffer = Queue()
 # Thread safe buffers for viewing the video streams and predictions in real-time
 face_stream_data_buffer = Queue(maxsize=1)
 body_stream_data_buffer = Queue(maxsize=1)
 # Setup db streaming buffers
-face_frame_buffer_db = []
-body_frame_buffer_db = []
+face_frame_buffer_db = Queue()
+body_frame_buffer_db = Queue()
 # Setup threads and thread kill flags
 face_processing_thread = None
 face_thread_kill = False
@@ -174,9 +174,14 @@ def save_face_frames_to_firestore():
 
     logger.debug("FACE_STREAM: Beginning save_face_frames_to_firestore")
 
-    # Step 1) Copy the local buffer so we don't mutate it while writing
+    # Step 1) Copy the local buffer into a list
     copy_start_time = time.time()
-    frame_data = list(face_frame_buffer_db)
+    frame_data = []
+    while not face_frame_buffer_db.empty():
+        try:
+            frame_data.append(face_frame_buffer_db.get_nowait())
+        except queue.Empty:
+            break
     copy_time = (time.time() - copy_start_time) * 1000
 
     # Step 2) Create or retrieve the Firestore doc for this session ID
@@ -228,9 +233,6 @@ def save_face_frames_to_firestore():
         f"  - Writing {len(frame_data)} records: {write_time:.2f}ms\n"
         f"  - Total function time: {overall_time:.2f}ms"
     )
-
-    # Step 5) Clear the local buffer
-    face_frame_buffer_db = []
 
 
 # Face stream helper function to compute Eye Aspect Ratio (EAR)
@@ -313,10 +315,16 @@ def process_stream_face(url):
         # 1) If we've rolled over to a new second, finalize the old second
         # ------------------------------------------------------------------
         if last_second is not None and now_second != last_second:
-            if len(face_stream_cursecond_buffer) > 0:
-                # Gather the per-frame classifications from the previous second
-                eye_labels = [item["eye"] for item in face_stream_cursecond_buffer]
-                mouth_labels = [item["mouth"] for item in face_stream_cursecond_buffer]
+            if not face_stream_cursecond_buffer.empty():
+                buffer_data = []
+                while not face_stream_cursecond_buffer.empty():
+                    try:
+                        buffer_data.append(face_stream_cursecond_buffer.get_nowait())
+                    except queue.Empty:
+                        break
+
+                eye_labels = [item["eye"] for item in buffer_data]
+                mouth_labels = [item["mouth"] for item in buffer_data]
 
                 # Majority vote for eyes
                 eye_counts = Counter(eye_labels)
@@ -337,9 +345,9 @@ def process_stream_face(url):
                 }
 
                 # Store to the DB buffer
-                if len(face_frame_buffer_db) < NUM_SECONDS_BEFORE_STORE_IN_DB:
-                    face_frame_buffer_db.append(record)
-                if len(face_frame_buffer_db) >= NUM_SECONDS_BEFORE_STORE_IN_DB:
+                if face_frame_buffer_db.qsize() < NUM_SECONDS_BEFORE_STORE_IN_DB:
+                    face_frame_buffer_db.put(record)
+                if face_frame_buffer_db.qsize() >= NUM_SECONDS_BEFORE_STORE_IN_DB:
                     save_face_frames_to_firestore()
 
                 # Measure the DB operation time
@@ -363,9 +371,6 @@ def process_stream_face(url):
                         "processing_time": None,
                     }
                 )
-
-                # Clear out the old second’s buffer
-                face_stream_cursecond_buffer.clear()
 
                 # Log that we've finalized this second
                 logger.debug(
@@ -524,7 +529,7 @@ def process_stream_face(url):
         encoding_time = (time.time() - encode_start) * 1000
 
         # 8) Accumulate these classifications to do majority voting at the second boundary
-        face_stream_cursecond_buffer.append(
+        face_stream_cursecond_buffer.put(
             {
                 "eye": eye_classification,
                 "mouth": mouth_classification,
@@ -599,9 +604,14 @@ def save_body_frames_to_firestore():
 
     logger.debug("BODY_STREAM: Beginning save_body_frames_to_firestore")
 
-    # Step 1) Copy the local buffer so we don't mutate it while writing
+    # Step 1) Copy the local buffer into a list
     copy_start_time = time.time()
-    frame_data = list(body_frame_buffer_db)
+    frame_data = []
+    while not body_frame_buffer_db.empty():
+        try:
+            frame_data.append(body_frame_buffer_db.get_nowait())
+        except queue.Empty:
+            break
     copy_time = (time.time() - copy_start_time) * 1000
 
     # Step 2) Create or retrieve the doc for this session ID
@@ -651,9 +661,6 @@ def save_body_frames_to_firestore():
         f"  - Writing {len(frame_data)} records: {write_time:.2f}ms\n"
         f"  - Total function time: {overall_time:.2f}ms"
     )
-
-    # Step 4) Clear the local buffer
-    body_frame_buffer_db = []
 
 
 # Body stream helper function for preprocess inputs to CLIP
@@ -769,8 +776,15 @@ def process_stream_body(url):
         if last_second is not None and now_second != last_second:
             # If we have predictions in the buffer for the previous second,
             # compute a majority vote and store/publish the final classification.
-            if len(body_stream_cursecond_buffer) > 0:
-                counts = Counter(body_stream_cursecond_buffer)
+            if not body_stream_cursecond_buffer.empty():
+                buffer_data = []
+                while not body_stream_cursecond_buffer.empty():
+                    try:
+                        buffer_data.append(body_stream_cursecond_buffer.get_nowait())
+                    except queue.Empty:
+                        break
+
+                counts = Counter(buffer_data)
                 majority_label, _ = counts.most_common(1)[0]
 
                 # Record the time to measure DB write overhead (if it occurs)
@@ -783,9 +797,9 @@ def process_stream_body(url):
                 }
 
                 # 2) Save it in the local DB buffer
-                if len(body_frame_buffer_db) < NUM_SECONDS_BEFORE_STORE_IN_DB:
-                    body_frame_buffer_db.append(record)
-                if len(body_frame_buffer_db) >= NUM_SECONDS_BEFORE_STORE_IN_DB:
+                if body_frame_buffer_db.qsize() < NUM_SECONDS_BEFORE_STORE_IN_DB:
+                    body_frame_buffer_db.put(record)
+                if body_frame_buffer_db.qsize() >= NUM_SECONDS_BEFORE_STORE_IN_DB:
                     save_body_frames_to_firestore()
 
                 # Measure time spent in DB logic (including function call)
@@ -810,9 +824,6 @@ def process_stream_body(url):
                         "processing_time": None,
                     }
                 )
-
-                # Clear the buffer for the old second
-                body_stream_cursecond_buffer.clear()
 
                 # Log that we finalized this second
                 logger.debug(
@@ -1002,7 +1013,7 @@ def process_stream_body(url):
         # ----------------------------------------------------------------
         # 3) Accumulate the label for majority vote later
         # ----------------------------------------------------------------
-        body_stream_cursecond_buffer.append(prediction_label)
+        body_stream_cursecond_buffer.put(prediction_label)
 
         # ----------------------------------------------------------------
         # 4) Send partial results (image + placeholder prediction) to front-end
@@ -1078,9 +1089,9 @@ def body_stream_view():
 # Thread safe buffer for viewing the obd streams in real-time
 obd_stream_data_buffer = Queue(maxsize=1)
 # Setup buffer to hold the obd data for all frames in the current second
-obd_cursecond_buffer = []
+obd_cursecond_buffer = Queue()
 # Setup db streaming buffer
-obd_frame_buffer_db = []
+obd_frame_buffer_db = Queue()
 # Keep track of the last processed second for the obd
 last_second_obd = None
 # Keep track of the current frame in the obd session
@@ -1109,7 +1120,12 @@ def save_obd_frames_to_firestore():
 
     # Step 1) Copy the local buffer so we don't mutate it while writing
     copy_start_time = time.time()
-    frame_data = list(obd_frame_buffer_db)
+    frame_data = []
+    while not obd_frame_buffer_db.empty():
+        try:
+            frame_data.append(obd_frame_buffer_db.get_nowait())
+        except queue.Empty:
+            break
     copy_time = (time.time() - copy_start_time) * 1000
 
     # Step 2) Create or retrieve the doc for this session ID
@@ -1173,9 +1189,6 @@ def save_obd_frames_to_firestore():
         f"  - Total function time: {overall_time:.2f}ms"
     )
 
-    # Step 4) Clear the local buffer
-    obd_frame_buffer_db = []
-
 
 def process_obd_data(obd_data):
     """
@@ -1205,17 +1218,26 @@ def process_obd_data(obd_data):
     logger.debug(f"OBD_STREAM: Received new OBD data at timestamp {current_timestamp}")
 
     # If we've rolled into a new second, finalize the previous second's data.
-    if last_second_obd is not None and current_timestamp != last_second_obd:
+    if (
+        last_second_obd is not None
+        and current_timestamp != last_second_obd
+        and not obd_cursecond_buffer.empty()
+    ):
         finalize_start = time.time()
         # --- Aggregation Step ---
         # Extract lists for each measurement from the buffer.
         aggregation_start = time.time()
-        speed_labels = [item["speed"] for item in obd_cursecond_buffer]
-        rpm_labels = [item["rpm"] for item in obd_cursecond_buffer]
-        check_engine_on_labels = [
-            item["check_engine_on"] for item in obd_cursecond_buffer
-        ]
-        num_dtc_codes_labels = [item["num_dtc_codes"] for item in obd_cursecond_buffer]
+        buffer_data = []
+        while not obd_cursecond_buffer.empty():
+            try:
+                buffer_data.append(obd_cursecond_buffer.get_nowait())
+            except queue.Empty:
+                break
+
+        speed_labels = [item["speed"] for item in buffer_data]
+        rpm_labels = [item["rpm"] for item in buffer_data]
+        check_engine_on_labels = [item["check_engine_on"] for item in buffer_data]
+        num_dtc_codes_labels = [item["num_dtc_codes"] for item in buffer_data]
 
         # Calculate averages for speed, rpm, and num_dtc_codes (ignoring invalid -1 values)
         valid_speeds = [speed for speed in speed_labels if speed != -1]
@@ -1254,14 +1276,12 @@ def process_obd_data(obd_data):
         }
 
         # Append the aggregated record to the DB buffer, and trigger save if threshold reached.
-        if len(obd_frame_buffer_db) < NUM_SECONDS_BEFORE_STORE_IN_DB:
-            obd_frame_buffer_db.append(record)
-        if len(obd_frame_buffer_db) >= NUM_SECONDS_BEFORE_STORE_IN_DB:
+        if obd_frame_buffer_db.qsize() < NUM_SECONDS_BEFORE_STORE_IN_DB:    
+            obd_frame_buffer_db.put(record)
+        if obd_frame_buffer_db.qsize() >= NUM_SECONDS_BEFORE_STORE_IN_DB:
             save_obd_frames_to_firestore()
         db_elapsed = (time.time() - db_start_time) * 1000
 
-        # Clear the per-second buffer after finalizing the previous second.
-        obd_cursecond_buffer.clear()
         finalize_elapsed = (time.time() - finalize_start) * 1000
 
         logger.info(
@@ -1285,7 +1305,7 @@ def process_obd_data(obd_data):
         "check_engine_on": obd_data.get("check_engine_on", None),
         "num_dtc_codes": obd_data.get("num_dtc_codes", -1),
     }
-    obd_cursecond_buffer.append(obd_cursecond_buffer_entry)
+    obd_cursecond_buffer.put(obd_cursecond_buffer_entry)
 
     # Build a live-stream buffer entry including a frame counter.
     obd_stream_buffer_entry = {
