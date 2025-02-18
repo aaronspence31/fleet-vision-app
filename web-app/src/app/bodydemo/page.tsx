@@ -8,7 +8,7 @@ import Image from "next/image";
 export default function BodyDemo() {
   const [livePredictStream, setLivePredictStream] = useState<LiveFrame[]>([]);
   const [events, setEvents] = useState<Event[]>([]);
-  const bodyImgRef = useRef(null);
+  const bodyImgRef = useRef<HTMLImageElement>(null);
 
   useEffect(() => {
     const eventSource = new EventSource(
@@ -26,7 +26,7 @@ export default function BodyDemo() {
         probability: parseFloat(data.probability),
         frameNum: parseInt(data.frame_number),
         timestamp: parseInt(data.timestamp),
-        processing_time: data.processing_time,
+        processing_time: parseFloat(data.processing_time),
         camera: "Body",
       });
     };

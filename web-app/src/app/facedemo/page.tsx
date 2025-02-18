@@ -8,7 +8,7 @@ import Image from "next/image";
 export default function FaceDemo() {
   const [livePredictStream, setLivePredictStream] = useState<LiveFrame[]>([]);
   const [events, setEvents] = useState<Event[]>([]);
-  const faceImgRef = useRef(null);
+  const faceImgRef = useRef<HTMLImageElement>(null);
 
   useEffect(() => {
     const eventSource = new EventSource(

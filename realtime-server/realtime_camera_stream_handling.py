@@ -1132,7 +1132,11 @@ def face_stream_view():
                 pass
             time.sleep(0.05)
 
-    return Response(generate(), mimetype="text/event-stream")
+    response = Response(generate(), mimetype="text/event-stream")
+    response.headers.add("Access-Control-Allow-Origin", "*")  # Or specific origin
+    response.headers.add("Cache-Control", "no-cache")
+    response.headers.add("Connection", "keep-alive")
+    return response
 
 
 @realtime_camera_stream_handling.route("/body_stream_view")
@@ -1149,7 +1153,11 @@ def body_stream_view():
                 pass
             time.sleep(0.05)
 
-    return Response(generate(), mimetype="text/event-stream")
+    response = Response(generate(), mimetype="text/event-stream")
+    response.headers.add("Access-Control-Allow-Origin", "*")  # Or specific origin
+    response.headers.add("Cache-Control", "no-cache")
+    response.headers.add("Connection", "keep-alive")
+    return response
 
 
 @realtime_camera_stream_handling.route("/face_stream_start")
