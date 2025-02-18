@@ -12,7 +12,7 @@ export default function BodyDemo() {
 
   useEffect(() => {
     const eventSource = new EventSource(
-      `http://127.0.0.1:5000/body_stream_view`
+      `http://ghastly-singular-snake.ngrok.app:5000/body_stream_view`
     );
     eventSource.onmessage = (event) => {
       const data: ServerResponse = JSON.parse(event.data);
