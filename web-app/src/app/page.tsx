@@ -19,7 +19,7 @@ import {
 
 const anonymous = Anonymous_Pro({ weight: "700", subsets: ["latin"] });
 
-function SessionPill(session: FrameBatchType[] | null) {
+function SessionPill(session: FrameBatchType[] = [] as FrameBatchType[]) {
   if (!session) {
     return;
   }
