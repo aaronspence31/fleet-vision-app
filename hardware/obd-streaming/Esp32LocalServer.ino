@@ -4,8 +4,10 @@
 
 // const char *ssid = "Aaron iPhone 15";
 // const char *password = "12345678";
-const char *ssid = "SPIDER-LAN";
-const char *password = "GreatPowerGreatResponsibility123!";
+// const char* ssid = "Naumaan iPhone";
+// const char* password = "joinup123";
+const char *ssid = "Sheikh-Deco";
+const char *password = "9058477273";
 const int UART_BAUD = 9600;
 const int RX2_PIN = 16;
 const int TX2_PIN = 17;
@@ -15,9 +17,7 @@ void sendJsonToServer(const String &jsonData)
   if (WiFi.status() == WL_CONNECTED)
   {
     HTTPClient http;
-    // http.begin("http://172.20.10.14:5000/obd_data");
-    // http.begin("http://192.168.68.58:5000/obd_data");
-    http.begin("http://192.168.68.56:5000/obd_data");
+    http.begin("https://ghastly-singular-snake.ngrok.app:80/receive_obd_data");
 
     http.addHeader("Content-Type", "application/json");
 

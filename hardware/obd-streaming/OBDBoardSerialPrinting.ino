@@ -13,81 +13,6 @@ MCP_CAN CAN(SPI_CS_PIN);
 #define PID_SPEED 0x0D
 // Mode 01 PID 0x01 returns MIL status & DTC count
 
-// --- Global Light Group Mapping ---
-// Four groups with full sensor lists.
-struct LightGroup
-{
-  const char *system;
-  const char *sensors[10]; // Maximum sensors per group
-  byte sensorCount;
-};
-
-LightGroup groups[] = {
-    {"check_engine", {"Oxygen (O₂) Sensors", "Mass Air Flow (MAF) Sensor", "Engine Coolant Temperature (ECT) Sensor", "Throttle Position Sensor (TPS)", "Manifold Absolute Pressure (MAP) Sensor", "Crankshaft Position Sensor", "Camshaft Position Sensor", "Knock Sensor", "Evaporative Emission (EVAP) System Sensors"}, 9},
-    {"transmission", {"Transmission Fluid Temperature Sensor", "Transmission Speed Sensor", "Transmission Pressure Sensor"}, 3},
-    {"abs", {"Wheel Speed Sensors", "Brake Pressure Sensors", "ABS Control Module/Related Circuitry"}, 3},
-    {"airbag", {"Crash/Impact Sensors", "Occupant Detection Sensors", "Airbag Module Self-Diagnostics"}, 3}};
-
-const int numGroups = sizeof(groups) / sizeof(groups[0]);
-
-// --- Helper: Classify a DTC Code into a System ---
-// Simple rules:
-// - 'P' codes: if they begin with "P07" then transmission; otherwise check_engine.
-// - 'C' codes: abs.
-// - 'B' codes: airbag.
-const char *classifyDTC(const char *dtc)
-{
-  if (dtc[0] == 'P')
-  {
-    if (dtc[1] == '0' && dtc[2] == '7')
-      return "transmission";
-    else
-      return "check_engine";
-  }
-  else if (dtc[0] == 'C')
-  {
-    return "abs";
-  }
-  else if (dtc[0] == 'B')
-  {
-    return "airbag";
-  }
-  return NULL;
-}
-
-// --- Helper: Convert a 16-bit DTC Code to a String (e.g., "P0123") ---
-// The readDTC() response returns a 16-bit code.
-void formatDTC(uint16_t code, char *dtcStr, size_t dtcStrSize)
-{
-  uint8_t byte1 = (code >> 8) & 0xFF;
-  uint8_t byte2 = code & 0xFF;
-  char type;
-  uint8_t t = (byte1 & 0xC0) >> 6;
-  switch (t)
-  {
-  case 0:
-    type = 'P';
-    break;
-  case 1:
-    type = 'C';
-    break;
-  case 2:
-    type = 'B';
-    break;
-  case 3:
-    type = 'U';
-    break;
-  default:
-    type = 'X';
-    break;
-  }
-  int digit1 = (byte1 & 0x30) >> 4;
-  int digit2 = (byte1 & 0x0F);
-  int digit3 = (byte2 >> 4);
-  int digit4 = (byte2 & 0x0F);
-  snprintf(dtcStr, dtcStrSize, "%c%d%d%d%d", type, digit1, digit2, digit3, digit4);
-}
-
 // --- Function: Send a PID Request ---
 // Sends an 8-byte message with Mode 01 and the given PID.
 void sendPid(byte pid)
@@ -101,7 +26,7 @@ bool getSpeed(int *speed)
 {
   sendPid(PID_SPEED);
   unsigned long timeout = millis();
-  while (millis() - timeout < 1000)
+  while (millis() - timeout < 400)
   {
     if (CAN_MSGAVAIL == CAN.checkReceive())
     {
@@ -122,7 +47,7 @@ bool getRPM(int *rpm)
 {
   sendPid(PID_RPM);
   unsigned long timeout = millis();
-  while (millis() - timeout < 1000)
+  while (millis() - timeout < 400)
   {
     if (CAN_MSGAVAIL == CAN.checkReceive())
     {
@@ -139,48 +64,12 @@ bool getRPM(int *rpm)
   return false;
 }
 
-// --- Function: Read DTC Codes via Mode 03 ---
-// Sends a Mode 03 request and parses the response.
-// It stores up to maxCodes DTC codes in dtcCodes and returns true if at least one is found.
-bool getDTC(uint16_t *dtcCodes, byte maxCodes, byte &codeCount)
-{
-  byte data[8] = {0x02, 0x03, 0, 0, 0, 0, 0, 0};
-  CAN.sendMsgBuf(0x7DF, 0, 8, data);
-  unsigned long timeout = millis();
-  codeCount = 0;
-  while (millis() - timeout < 1000)
-  {
-    if (CAN_MSGAVAIL == CAN.checkReceive())
-    {
-      byte len = 0;
-      byte buf[8];
-      CAN.readMsgBuf(&len, buf);
-      // Expect a positive response for Mode 03: first data byte should be 0x43.
-      if (buf[1] == 0x43 || buf[1] == 0x5A)
-      {
-
-        // Starting at byte 2, every two bytes represent a DTC.
-        for (int i = 2; i + 1 < len && codeCount < maxCodes; i += 2)
-        {
-          uint16_t dtc = (buf[i] << 8) | buf[i + 1];
-          if (dtc == 0)
-            continue;
-          dtcCodes[codeCount++] = dtc;
-        }
-        break;
-      }
-    }
-  }
-  return (codeCount > 0);
-}
-
-// --- Get Warning Status and Build Sensor Groups ---
-// Reads Mode 01 PID 0x01 to check MIL status and DTC count.
-// If MIL is on, retrieves DTC codes via getDTC() and classifies them.
-// For each active group, adds the full sensor list from our mapping.
+// --- Get Warning Status ---
+// Sends a Mode 01 request to get the MIL status and number of DTCs.
+// If no valid response is received, sets check_engine_on to null and num_dtc_codes to -1.
 void getWarningStatus(JSONVar &jsonObj)
 {
-  // Send a PID 0x01 request for MIL status and DTC count.
+  // Send a PID 0x01 request for MIL status & DTC count.
   byte data[8] = {0x02, 0x01, 0x01, 0, 0, 0, 0, 0};
   CAN.sendMsgBuf(0x7DF, 0, 8, data);
   unsigned long timeout = millis();
@@ -202,71 +91,22 @@ void getWarningStatus(JSONVar &jsonObj)
     }
   }
   if (!gotPID01)
+  {
+    jsonObj["check_engine_on"] = nullptr; // using null to indicate unavailability
+    jsonObj["num_dtc_codes"] = -1;
     return;
+  }
 
   bool milOn = (value & 0x80) != 0;
   jsonObj["check_engine_on"] = milOn;
   jsonObj["num_dtc_codes"] = value & 0x7F;
-
-  if (milOn)
-  {
-    uint16_t codes[8];
-    byte numCodes = 0;
-    if (getDTC(codes, 8, numCodes))
-    {
-      char rawDTCs[128] = "";
-      bool first = true;
-      bool activeGroup[4] = {false, false, false, false}; // order: check_engine, transmission, abs, airbag
-
-      for (byte i = 0; i < numCodes; i++)
-      {
-        char dtcStr[6];
-        formatDTC(codes[i], dtcStr, sizeof(dtcStr));
-        if (!first)
-        {
-          strncat(rawDTCs, ",", sizeof(rawDTCs) - strlen(rawDTCs) - 1);
-        }
-        strncat(rawDTCs, dtcStr, sizeof(rawDTCs) - strlen(rawDTCs) - 1);
-        first = false;
-        const char *system = classifyDTC(dtcStr);
-        if (system)
-        {
-          for (int j = 0; j < numGroups; j++)
-          {
-            if (strcmp(groups[j].system, system) == 0)
-            {
-              activeGroup[j] = true;
-            }
-          }
-        }
-      }
-      jsonObj["dtc_codes"] = String(rawDTCs);
-
-      JSONVar warningLights = JSON.parse("{}");
-      for (int j = 0; j < numGroups; j++)
-      {
-        if (activeGroup[j])
-        {
-          JSONVar groupObj = JSON.parse("{}");
-          JSONVar sensors = JSON.parse("[]");
-          for (byte k = 0; k < groups[j].sensorCount; k++)
-          {
-            sensors[k] = groups[j].sensors[k];
-          }
-          groupObj["sensors"] = sensors;
-          warningLights[groups[j].system] = groupObj;
-        }
-      }
-      jsonObj["warning_lights"] = warningLights;
-    }
-  }
 }
 
 // --- Build and Print JSON Data ---
 void sendJsonData()
 {
   JSONVar jsonObj = JSON.parse("{}");
-  jsonObj["timestamp"] = millis();
+  // jsonObj["timestamp"] = millis();
 
   int speed = 0, rpm = 0;
   if (getSpeed(&speed))
@@ -307,6 +147,7 @@ void setup()
   // For OBD-II GPS Dev Kit RP2040 version
   pinMode(12, OUTPUT);
   digitalWrite(12, HIGH);
+
   // Initialize CAN bus at 500 kbps like your working code
   while (CAN_OK != CAN.begin(CAN_500KBPS))
   {
@@ -325,7 +166,7 @@ void setup()
 void loop()
 {
   sendJsonData();
-  delay(1000);
+  delay(400);
 }
 
 // #include <SPI.h>
@@ -376,7 +217,7 @@ void loop()
 
 //   unsigned long startTime = millis();
 //   // Read responses for 1 second
-//   while (millis() - startTime < 1000) {
+//   while (millis() - startTime < 7000) {
 //     if (CAN_MSGAVAIL == CAN.checkReceive()) {
 //       byte len = 0;
 //       byte buf[8];
