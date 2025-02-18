@@ -12,7 +12,7 @@ export default function FaceDemo() {
 
   useEffect(() => {
     const eventSource = new EventSource(
-      `http://ghastly-singular-snake.ngrok.app/face_stream_view`
+      `https://ghastly-singular-snake.ngrok.app/face_stream_view`
     );
     eventSource.onmessage = (event) => {
       const data: ServerResponse = JSON.parse(event.data);
