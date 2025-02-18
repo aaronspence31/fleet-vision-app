@@ -79,10 +79,15 @@ export default function Dashboard() {
     loadData();
   }, []);
 
+  useEffect(() => {
+    console.log("Body Data: ", bodyData);
+  }, [bodyData]);
+
   return (
     <Box className={styles.pageContainer}>
       <Box className={styles.pageContent}>
-        <Box className={styles.pageHeaderBar}>
+        TEST TEST TEST
+        {/* <Box className={styles.pageHeaderBar}>
           <Typography
             sx={{ typography: { xl: "h3", lg: "h4" } }}
             className={anonymous.className}
@@ -109,9 +114,9 @@ export default function Dashboard() {
               )}
             </Typography>
           </Box>
-        </Box>
+        </Box> */}
         <Box className={styles.pageContentBody}>
-          <DisplayCard>
+          {/* <DisplayCard>
             <Box className={styles.safetyScoreOverSessionContainer}>
               <Typography
                 className={`${anonymous.className} ${styles.DistractionBreakdownTitle}`}
@@ -180,8 +185,8 @@ export default function Dashboard() {
               </Box>
               <Button className={styles.viewSessionsButton}>View All</Button>
             </Box>
-          </DisplayCard>
-          <DisplayCard>
+          </DisplayCard> */}
+          {/* <DisplayCard>
             <Box
               className={styles.FlexBoxRow}
               style={{ width: "100%", height: "100%" }}
@@ -240,7 +245,7 @@ export default function Dashboard() {
                 />
               </Box>
             </Box>
-          </DisplayCard>
+          </DisplayCard> */}
         </Box>
       </Box>
     </Box>
