@@ -1,6 +1,5 @@
 from flask import Flask
-from realtime_camera_stream_handling import realtime_camera_stream_handling
-from realtime_obd_stream_handling import realtime_obd_stream_handling
+from realtime_stream_handling import realtime_camera_stream_handling, realtime_obd_stream_handling
 import logging
 from flask_cors import CORS
 import os

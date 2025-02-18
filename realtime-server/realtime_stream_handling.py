@@ -14,19 +14,36 @@ import queue
 from PIL import Image
 from queue import Queue
 from collections import Counter
-from firestore import body_drive_sessions, face_drive_sessions
+from firestore import body_drive_sessions, face_drive_sessions, obd_drive_sessions
 from firebase_admin import firestore
-from flask import Blueprint, Response, make_response
+from flask import Blueprint, Response, make_response, request
 import dlib
 from imutils import face_utils
 from zeroconf import Zeroconf
 import socket
 
+# This file defines the Flask blueprints for handling the real-time camera and OBD streams.
 realtime_camera_stream_handling = Blueprint("realtime_camera_stream_handling", __name__)
+realtime_obd_stream_handling = Blueprint("realtime_obd_stream_handling", __name__)
+
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
 )
 logger = logging.getLogger(__name__)
+
+
+# We must always set the current session ID and name if there is one whenever we start a new face or body processing thread
+# This is because the OBD code will need to use the current session ID to write to the DB and it might want the name too
+current_session_id = None
+current_session_name = None
+# This constant applies to both camera stream and OBD DB saves
+NUM_SECONDS_BEFORE_STORE_IN_DB = 1
+
+######################################################################################
+######################################################################################
+##### CAMERA STREAM HANDLING CODE BELOW ##############################################
+######################################################################################
+######################################################################################
 
 # Constants
 # These work when on wifi, may break when on hotspot
@@ -41,7 +58,6 @@ CLIP_INPUT_SIZE = 224
 CLIP_MODEL_PATH_BODY = "dmd29_vitbl14-hypc_429_1000_ft.pkl"
 EAR_THRESHOLD = 0.25
 MAR_THRESHOLD = 0.28
-NUM_SECONDS_BEFORE_STORE_IN_DB = 1
 
 # Setup cv2 classifiers to detect a person in the frame
 faceCascade = cv2.CascadeClassifier(
@@ -139,18 +155,19 @@ def resolve_mdns_via_zeroconf(hostname: str) -> str:
 
 
 # Face stream helper function to save to the DB
-# Each second classification will be stored in the format below
+# Each face stream second classification will be stored in the format below
+# Each session will also be given a created_at_value and optionally a session_name if one was provided when the session was made
 # face_drive_sessions/<sessionId>/face_drive_session_classifications/<timestamp>
 # there will be a eye_classification and mouth_classification field with the final classification for that second
-# Eyes State classifications are Eyes Open, Eyes Closed or Unknown
-# Mouth State classifications are Mouth Open, Mouth Closed or Unknown
-def save_face_frames_to_firestore(sessionId):
+# String Eyes State classifications are "Eyes Open", "Eyes Closed" or "Unknown"
+# String Mouth State classifications are "Mouth Open", "Mouth Closed" or "Unknown"
+def save_face_frames_to_firestore():
     """
     Saves classification data to Firestore under a document named after sessionId
     in the 'face_drive_sessions' collection. If the session doc does not exist, it is created.
     Otherwise, we update the existing doc with new timestamped classifications.
     """
-    global face_frame_buffer_db
+    global face_frame_buffer_db, current_session_id, current_session_name
 
     # Record the overall function start
     overall_start_time = time.time()
@@ -164,7 +181,7 @@ def save_face_frames_to_firestore(sessionId):
 
     # Step 2) Create or retrieve the Firestore doc for this session ID
     doc_check_start_time = time.time()
-    doc_ref = face_drive_sessions.document(str(sessionId))
+    doc_ref = face_drive_sessions.document(str(current_session_id))
     doc_snapshot = doc_ref.get()
     doc_check_time = (time.time() - doc_check_start_time) * 1000
 
@@ -173,10 +190,16 @@ def save_face_frames_to_firestore(sessionId):
     if not doc_snapshot.exists:
         doc_create_start_time = time.time()
         doc_ref.set(
-            {"session_id": str(sessionId), "created_at": firestore.SERVER_TIMESTAMP}
+            {
+                "session_id": str(current_session_id),
+                "created_at": firestore.SERVER_TIMESTAMP,
+                "session_name": current_session_name,
+            }
         )
         doc_create_time = (time.time() - doc_create_start_time) * 1000
-        logger.debug(f"FACE_STREAM: Created new session doc for session ID {sessionId}")
+        logger.debug(
+            f"FACE_STREAM: Created new session doc for session ID {current_session_id}"
+        )
 
     # Step 3) Write each (timestamp, classification) as a doc in 'face_drive_session_classifications'
     write_start_time = time.time()
@@ -235,7 +258,7 @@ def compute_MAR(mouth):
 # Eyes State Predictions are Eyes Open, Eyes Closed or Unknown
 # Mouth State Predictions are Mouth Open, Mouth Closed or Unknown
 # Used paper here https://pmc.ncbi.nlm.nih.gov/articles/PMC11398282/
-def process_stream_face(url, sessionId):
+def process_stream_face(url):
     """
     Main face stream processing function.
 
@@ -252,22 +275,21 @@ def process_stream_face(url, sessionId):
 
     Args:
         url (str): The camera streaming endpoint.
-        sessionId (str): A unique session identifier for storing results in Firestore.
     """
     global frame_count_face, face_stream_data_buffer, face_thread_kill
     global face_frame_buffer_db, face_stream_cursecond_buffer
+    global current_session_id
 
     logger.info(
-        f"FACE_STREAM: Starting face stream processing with sessionId: {sessionId} and ESP32 URL: {url}"
+        f"FACE_STREAM: Starting face stream processing with sessionId: {current_session_id} and ESP32 URL: {url}"
     )
 
     cap = cv2.VideoCapture(url)
     cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
 
-    from collections import Counter
-
     # Track the integer second for majority-voting logic
     last_second = None
+    frame_count_face = 0
 
     while not face_thread_kill:
         # Record the start time for timing the entire pipeline
@@ -318,7 +340,7 @@ def process_stream_face(url, sessionId):
                 if len(face_frame_buffer_db) < NUM_SECONDS_BEFORE_STORE_IN_DB:
                     face_frame_buffer_db.append(record)
                 if len(face_frame_buffer_db) >= NUM_SECONDS_BEFORE_STORE_IN_DB:
-                    save_face_frames_to_firestore(sessionId)
+                    save_face_frames_to_firestore()
 
                 # Measure the DB operation time
                 db_elapsed = (time.time() - db_start_time) * 1000
@@ -558,17 +580,19 @@ def process_stream_face(url, sessionId):
 
 
 # Body stream helper function for saving to DB
-# Each second classification will be stored in the format below
+# Each body stream second classification will be stored in the format below
+# Each session will also be given a created_at_value and optionally a session_name if one was provided when the session was made
 # body_drive_sessions/<sessionId>/body_drive_session_classifications/<timestamp>
-# there will be a single classification field with the final classification for that second
-# Expect body_stream_index_to_label classifications and Unknown as possible classifications
-def save_body_frames_to_firestore(sessionId):
+# there will be a single classification field with the final String classification for that second
+# Expect  "Driving Safely", "Drinking beverage", "Adjusting hair, glasses, or makeup", "Talking on phone",
+# "Reaching beside or behind", "Talking to passenger", "Texting/using phone", "Yawning" and "Unknown" as possible classifications
+def save_body_frames_to_firestore():
     """
     Saves classification data to Firestore under a document named after sessionId
     in the 'body_drive_sessions' collection. If the session doc does not exist, it is created.
     Otherwise, we update the existing doc with new timestamped classifications.
     """
-    global body_frame_buffer_db
+    global body_frame_buffer_db, current_session_id, current_session_name
 
     # Record the overall function start time
     overall_start_time = time.time()
@@ -582,7 +606,7 @@ def save_body_frames_to_firestore(sessionId):
 
     # Step 2) Create or retrieve the doc for this session ID
     doc_check_start_time = time.time()
-    doc_ref = body_drive_sessions.document(str(sessionId))
+    doc_ref = body_drive_sessions.document(str(current_session_id))
     doc_snapshot = doc_ref.get()
     doc_check_time = (time.time() - doc_check_start_time) * 1000
 
@@ -592,10 +616,16 @@ def save_body_frames_to_firestore(sessionId):
     if not doc_snapshot.exists:
         doc_create_start_time = time.time()
         doc_ref.set(
-            {"session_id": str(sessionId), "created_at": firestore.SERVER_TIMESTAMP}
+            {
+                "session_id": str(current_session_id),
+                "created_at": firestore.SERVER_TIMESTAMP,
+                "session_name": current_session_name,
+            }
         )
         doc_create_time = (time.time() - doc_create_start_time) * 1000
-        logger.debug(f"BODY_STREAM: Created new session doc for session ID {sessionId}")
+        logger.debug(
+            f"BODY_STREAM: Created new session doc for session ID {current_session_id}"
+        )
 
     # Step 3) Write each (timestamp, classification) as a doc in 'body_drive_session_classifications'
     write_start_time = time.time()
@@ -677,7 +707,7 @@ def detect_person_in_frame(frame, scale_factor=1.2, min_neighbors=1):
 
 # Main body stream processing function
 # Expect body_stream_index_to_label classifications and Unknown as possible predictions on each frame
-def process_stream_body(url, sessionId):
+def process_stream_body(url):
     """
     Main body stream processing function.
 
@@ -691,15 +721,14 @@ def process_stream_body(url, sessionId):
 
     Args:
         url (str): The camera streaming endpoint.
-        sessionId (str): Unique identifier for the driving session (used for Firestore).
     """
 
     global frame_count_body, clip_model, clip_preprocess, clip_classifier_body
     global body_stream_data_buffer, body_frame_buffer_db, body_thread_kill
-    global body_stream_cursecond_buffer
+    global body_stream_cursecond_buffer, current_session_id
 
     logger.info(
-        f"BODY_STREAM: Starting body stream processing with sessionId: {sessionId} and ESP32 URL: {url}"
+        f"BODY_STREAM: Starting body stream processing with sessionId: {current_session_id} and ESP32 URL: {url}"
     )
 
     # Ensure CLIP model and components are initialized before proceeding
@@ -714,6 +743,7 @@ def process_stream_body(url, sessionId):
     # Track the integer second so we know when a new second starts.
     # We will accumulate per-frame predictions in body_stream_cursecond_buffer during that second.
     last_second = None
+    frame_count_body = 0
 
     while not body_thread_kill:
         # Record the start time for timing the entire pipeline
@@ -756,7 +786,7 @@ def process_stream_body(url, sessionId):
                 if len(body_frame_buffer_db) < NUM_SECONDS_BEFORE_STORE_IN_DB:
                     body_frame_buffer_db.append(record)
                 if len(body_frame_buffer_db) >= NUM_SECONDS_BEFORE_STORE_IN_DB:
-                    save_body_frames_to_firestore(sessionId)
+                    save_body_frames_to_firestore()
 
                 # Measure time spent in DB logic (including function call)
                 db_elapsed = (time.time() - db_start_time) * 1000
@@ -994,19 +1024,368 @@ def process_stream_body(url, sessionId):
         )
 
 
-# PUT ALL ROUTES BELOW -----------------------------------------------------------------------
+# PUT ALL CAMERA STREAM ROUTES BELOW -----------------------------------------------------------------------
 
 
-# Start both stream processing functions as part of the same session
-@realtime_camera_stream_handling.route("/both_camera_streams_start")
-def both_streams_start():
-    global body_processing_thread, face_processing_thread
+@realtime_camera_stream_handling.route("/face_stream_view")
+def face_stream_view():
+    global face_stream_data_buffer
 
-    # Check if they're already running
+    def generate():
+        while True:
+            try:
+                while not face_stream_data_buffer.empty():
+                    frame = face_stream_data_buffer.get_nowait()
+                    yield f"data: {json.dumps(frame)}\n\n"
+            except queue.Empty:
+                pass
+            time.sleep(0.05)
+
+    response = Response(generate(), mimetype="text/event-stream")
+    response.headers.add("Access-Control-Allow-Origin", "*")
+    response.headers.add("Cache-Control", "no-cache")
+    response.headers.add("Connection", "keep-alive")
+    return response
+
+
+@realtime_camera_stream_handling.route("/body_stream_view")
+def body_stream_view():
+    global body_stream_data_buffer
+
+    def generate():
+        while True:
+            try:
+                while not body_stream_data_buffer.empty():
+                    frame = body_stream_data_buffer.get_nowait()
+                    yield f"data: {json.dumps(frame)}\n\n"
+            except queue.Empty:
+                pass
+            time.sleep(0.05)
+
+    response = Response(generate(), mimetype="text/event-stream")
+    response.headers.add("Access-Control-Allow-Origin", "*")
+    response.headers.add("Cache-Control", "no-cache")
+    response.headers.add("Connection", "keep-alive")
+    return response
+
+
+######################################################################################
+######################################################################################
+##### OBD STREAM HANDLING CODE BELOW #################################################
+######################################################################################
+######################################################################################
+
+# Thread safe buffer for viewing the obd streams in real-time
+obd_stream_data_buffer = Queue(maxsize=1)
+# Setup buffer to hold the obd data for all frames in the current second
+obd_cursecond_buffer = []
+# Setup db streaming buffer
+obd_frame_buffer_db = []
+# Keep track of the last processed second for the obd
+last_second_obd = None
+# Keep track of the current frame in the obd session
+frame_count_obd = 0
+
+
+# Each second's OBD frame data will be stored in the format below
+# Each session will also be given a created_at_value and optionally a session_name if one was provided when the session was made
+# obd_drive_sessions/<sessionId>/obd_drive_session_classifications/<timestamp>
+# Each obd_drive_session_classifications doc will contain speed, rpm, check_engine_on and num_dtc_codes
+# int speed and rpm will be 0 or greater if available and -1 if not available
+# bool check_engine_on will be True/False if available or null if not available
+# int num_dtc_codes will be 0 or greater if available or -1 if not available
+def save_obd_frames_to_firestore():
+    """
+    Saves classification data to Firestore under a document named after sessionId
+    in the 'obd_drive_sessions' collection. If the session doc does not exist, it is created.
+    Otherwise, we update the existing doc with new timestamped obd data.
+    """
+    global obd_frame_buffer_db, current_session_id, current_session_name
+
+    # Record the overall function start time
+    overall_start_time = time.time()
+
+    logger.debug("OBD_STREAM: Beginning save_obd_frames_to_firestore")
+
+    # Step 1) Copy the local buffer so we don't mutate it while writing
+    copy_start_time = time.time()
+    frame_data = list(obd_frame_buffer_db)
+    copy_time = (time.time() - copy_start_time) * 1000
+
+    # Step 2) Create or retrieve the doc for this session ID
+    doc_check_start_time = time.time()
+    doc_ref = obd_drive_sessions.document(str(current_session_id))
+    doc_snapshot = doc_ref.get()
+    doc_check_time = (time.time() - doc_check_start_time) * 1000
+
+    # Only create the doc if it doesn't exist
+    doc_create_start_time = None
+    doc_create_time = 0
+    if not doc_snapshot.exists:
+        doc_create_start_time = time.time()
+        doc_ref.set(
+            {
+                "session_id": str(current_session_id),
+                "created_at": firestore.SERVER_TIMESTAMP,
+                "session_name": current_session_name,
+            }
+        )
+        doc_create_time = (time.time() - doc_create_start_time) * 1000
+        logger.debug(
+            f"OBD_STREAM: Created new session doc for session ID {current_session_id}"
+        )
+
+    # Step 3) Write each (timestamp, classification) as a doc in 'obd_drive_session_classifications'
+    write_start_time = time.time()
+    for record in frame_data:
+        ts = record["timestamp"]
+
+        doc_data = {
+            "timestamp": ts,
+            "speed": record.get("speed", -1),
+            "rpm": record.get("rpm", -1),
+            "check_engine_on": record.get("check_engine_on", None),
+            "num_dtc_codes": record.get("num_dtc_codes", -1),
+        }
+
+        # Optionally add dtc_codes and warning_lights if available
+        if "dtc_codes" in record:
+            doc_data["dtc_codes"] = record["dtc_codes"]
+        if "warning_lights" in record:
+            doc_data["warning_lights"] = record["warning_lights"]
+
+        # Document ID = timestamp;
+        doc_ref.collection("obd_drive_session_classifications").document(str(ts)).set(
+            doc_data
+        )
+    write_time = (time.time() - write_start_time) * 1000
+
+    # Calculate the overall function time
+    overall_time = (time.time() - overall_start_time) * 1000
+
+    # Detailed log showing each step's duration
+    logger.debug(
+        "OBD_STREAM: Firestore save completed\n"
+        f"  - Copied buffer: {copy_time:.2f}ms\n"
+        f"  - Doc check: {doc_check_time:.2f}ms\n"
+        f"  - Doc create (if needed): {doc_create_time:.2f}ms\n"
+        f"  - Writing {len(frame_data)} records: {write_time:.2f}ms\n"
+        f"  - Total function time: {overall_time:.2f}ms"
+    )
+
+    # Step 4) Clear the local buffer
+    obd_frame_buffer_db = []
+
+
+def process_obd_data(obd_data):
+    global last_second_obd, frame_count_obd, obd_frame_buffer_db, obd_cursecond_buffer
+    # Get current server timestamp in seconds
+    current_timestamp = int(time.time())
+
+    # If this is a new second, process the previous second's data
+    if last_second_obd is not None and current_timestamp != last_second_obd:
+        # Gather the per-frame obd data from the previous second
+        speed_labels = [item["speed"] for item in obd_cursecond_buffer]
+        rpm_labels = [item["rpm"] for item in obd_cursecond_buffer]
+        check_engine_on_labels = [
+            item["check_engine_on"] for item in obd_cursecond_buffer
+        ]
+        num_dtc_codes_labels = [item["num_dtc_codes"] for item in obd_cursecond_buffer]
+
+        # Take average of non -1 speeds, rpms and num_dtc_codes. Leave avg as -1 if no valid values
+        valid_speeds = [speed for speed in speed_labels if speed != -1]
+        avg_speed = sum(valid_speeds) / len(valid_speeds) if valid_speeds else -1
+        valid_rpms = [rpm for rpm in rpm_labels if rpm != -1]
+        avg_rpm = sum(valid_rpms) / len(valid_rpms) if valid_rpms else -1
+        valid_dtc_codes = [
+            num_dtc_codes
+            for num_dtc_codes in num_dtc_codes_labels
+            if num_dtc_codes != -1
+        ]
+        avg_num_dtc_codes = (
+            sum(valid_dtc_codes) / len(valid_dtc_codes) if valid_dtc_codes else -1
+        )
+        # Take majority of non null check_engine_on. Leave as None if no valid values
+        check_engine_on_counts = Counter(
+            [
+                check_engine_on
+                for check_engine_on in check_engine_on_labels
+                if check_engine_on is not None
+            ]
+        )
+        majority_check_engine_on = (
+            check_engine_on_counts.most_common(1)[0][0]
+            if check_engine_on_counts
+            else None
+        )
+
+        # Time how long DB operations take (if we do them)
+        db_start_time = time.time()
+
+        # Build a record for Firestore
+        record = {
+            "timestamp": last_second_obd,
+            "speed": avg_speed,
+            "rpm": avg_rpm,
+            "check_engine_on": majority_check_engine_on,
+            "num_dtc_codes": avg_num_dtc_codes,
+        }
+
+        # Store to the DB buffer and DB if needed
+        if len(obd_frame_buffer_db) < NUM_SECONDS_BEFORE_STORE_IN_DB:
+            obd_frame_buffer_db.append(record)
+        if len(obd_frame_buffer_db) >= NUM_SECONDS_BEFORE_STORE_IN_DB:
+            save_obd_frames_to_firestore()
+
+        # Measure the DB operation time
+        db_elapsed = (time.time() - db_start_time) * 1000
+
+        # Clear out the old second’s buffer
+        obd_cursecond_buffer.clear()
+
+        # Log that we've finalized this second
+        logger.debug(
+            f"OBD_STREAM: Finalizing second {last_second_obd}, "
+            f"DB write time={db_elapsed:.2f}ms "
+            f"Speed: {avg_speed}, RPM: {avg_rpm}, Check Engine On: {majority_check_engine_on}, Num DTC Codes: {avg_num_dtc_codes}"
+        )
+
+    # Per frame pipeline here now
+
+    # Initialize last_second if needed, or update it if the second rolled over
+    if last_second_obd is None:
+        last_second_obd = current_timestamp
+    elif current_timestamp != last_second_obd:
+        last_second_obd = current_timestamp
+
+    # Increment the total frame counter
+    frame_count_body += 1
+
+    # Add to cursecond buffer
+    obd_cursecond_buffer_entry = {
+        "speed": obd_data.get("speed", -1),
+        "rpm": obd_data.get("rpm", -1),
+        "check_engine_on": obd_data.get("check_engine_on", None),
+        "num_dtc_codes": obd_data.get("num_dtc_codes", -1),
+    }
+    obd_cursecond_buffer.append(obd_cursecond_buffer_entry)
+    # Update live stream buffer with the latest streamed data
+    obd_stream_buffer_entry = {
+        "speed": obd_data.get("speed", -1),
+        "rpm": obd_data.get("rpm", -1),
+        "check_engine_on": obd_data.get("check_engine_on", None),
+        "num_dtc_codes": obd_data.get("num_dtc_codes", -1),
+        "timestamp": current_timestamp,
+        "frame_number": frame_count_obd,
+    }
+    # Update live stream buffer with the latest streamed data
+    if obd_stream_data_buffer.full():
+        obd_stream_data_buffer.get_nowait()
+    obd_stream_data_buffer.put(obd_stream_buffer_entry)
+
+
+# PUT ALL OBD STREAM ROUTES BELOW -----------------------------------------------------------------------
+
+
+# The ESP32 board will make requests to this endpoint as many times as it can per second
+# This allows the ESP32 board to send OBD data to the server in real-time
+@realtime_obd_stream_handling.route("/recieve_obd_data", methods=["POST"])
+def recieve_obd_data():
+    global obd_stream_data_buffer, current_session_id
+
+    if not current_session_id:
+        logger.error("OBD_STREAM: Data Ignored, No active session found")
+        return make_response("No active session found", 400)
+
+    obd_data = request.get_json() or {}
+    required_obd_fields = []  # No fields required for now
+    missing_obd_fields = [
+        field for field in required_obd_fields if field not in obd_data
+    ]
+    # Check if all required fields are present, ignore data if not
+    if missing_obd_fields:
+        logger.error(
+            f"OBD_STREAM: Data Ignored, Missing required fields: {missing_obd_fields}"
+        )
+        return make_response(
+            f"Data Ignored, Missing required fields: {missing_obd_fields}", 400
+        )
+
+    process_obd_data(obd_data)
+
+    logger.debug(f"OBD_STREAM: Data received and processed: {obd_data}")
+    return make_response("Data received and processed", 200)
+
+
+@realtime_obd_stream_handling.route("/obd_stream_view")
+def obd_stream_view():
+    global obd_stream_data_buffer
+
+    def generate():
+        while True:
+            try:
+                while not obd_stream_data_buffer.empty():
+                    obd_data = obd_stream_data_buffer.get_nowait()
+                    logger.debug(f"Streamed OBD data: {obd_data}")
+                    yield f"data: {json.dumps(obd_data)}\n\n"
+            except queue.Empty:
+                pass
+            time.sleep(0.05)
+
+    response = Response(generate(), mimetype="text/event-stream")
+    response.headers.add("Access-Control-Allow-Origin", "*")
+    response.headers.add("Cache-Control", "no-cache")
+    response.headers.add("Connection", "keep-alive")
+    return response
+
+
+######################################################################################
+######################################################################################
+##### Start and Stop Drive Session Code Below ########################################
+######################################################################################
+######################################################################################
+
+
+# Start both stream processing functions as part of the same session and set the global session variables
+# to the new session ID and name.
+@realtime_camera_stream_handling.route("/start_drive_session", methods=["POST"])
+def start_drive_session():
+    global body_processing_thread, face_processing_thread, current_session_id, current_session_name
+    global frame_count_obd, last_second_obd
+
+    # Check if session is in progress already
+    if current_session_id:
+        logger.info(f"Drive session {current_session_id} already in progress")
+        return make_response(
+            f"Drive session {current_session_id} already in progress. Please stop it using POST /stop_drive_session before starting a new one.",
+            409,
+        )
+    # Check if face or body threads are already running
     if body_processing_thread and body_processing_thread.is_alive():
-        return make_response("Body processing thread already running", 409)
+        logger.info(f"Drive session {current_session_id} already in progress")
+        return make_response(
+            f"Drive session {current_session_id} already in progress. Please stop it using POST /stop_drive_session before starting a new one. Body stream is currently being processed.",
+            409,
+        )
     if face_processing_thread and face_processing_thread.is_alive():
-        return make_response("Face processing thread already running", 409)
+        logger.info(f"Drive session {current_session_id} already in progress")
+        return make_response(
+            f"Drive session {current_session_id} already in progress. Please stop it using POST /stop_drive_session before starting a new one. Face stream is currently being processed.",
+            409,
+        )
+
+    # Get JSON data from the POST request
+    data = request.get_json() or {}
+    session_name = data.get("session_name", None)
+
+    # Generate a new session ID and assign global session variables
+    sessionId = uuid.uuid4()
+    current_session_id = sessionId
+    current_session_name = session_name
+
+    # Reset the frame count obd and last second obd
+    frame_count_obd = 0
+    last_second_obd = None
 
     # 1) Resolve face camera
     face_ip = resolve_mdns_via_zeroconf(FACE_STREAM_MDNS_NAME)
@@ -1025,28 +1404,37 @@ def both_streams_start():
 
     logger.info(f"Starting both: FACE => {face_url}, BODY => {body_url}")
 
-    sessionId = uuid.uuid4()
-
     # 3) Create threads using the local URLs
     body_processing_thread = threading.Thread(
-        target=process_stream_body, args=(body_url, sessionId)
+        target=process_stream_body, args=(body_url,)
     )
     body_processing_thread.start()
 
     face_processing_thread = threading.Thread(
-        target=process_stream_face, args=(face_url, sessionId)
+        target=process_stream_face, args=(face_url,)
     )
     face_processing_thread.start()
+    logger.info(
+        f"Successfully started face and body stream processing threads and new drive session with ID: {current_session_id} and name {current_session_name}"
+    )
 
     return make_response(
-        f"Body and Face processing started for session {sessionId}", 200
+        f"New Drive session started with ID: {current_session_id} and name {current_session_name}",
+        200,
     )
 
 
-# Attempt to stop both stream processing functions
-@realtime_camera_stream_handling.route("/both_camera_streams_stop")
-def both_streams_stop():
+# Attempt to stop the entire drive session by stopping both stream processing functions and
+# resetting the global session variables so the OBD data is ignored
+@realtime_camera_stream_handling.route("/stop_drive_session", methods=["POST"])
+def stop_drive_session():
     global body_processing_thread, body_thread_kill, face_processing_thread, face_thread_kill
+    global current_session_id, current_session_name
+    global frame_count_obd, last_second_obd
+
+    if not current_session_id:
+        logger.info("No active drive session to stop")
+        return make_response("No active drive session to stop", 400)
 
     logger.debug("Starting to stop both processing threads")
     errors = []
@@ -1100,6 +1488,16 @@ def both_streams_stop():
         logger.error(f"Error stopping face processing thread: {str(e)}")
         errors.append(f"Error stopping face thread: {str(e)}")
 
+    # Always reset the drive session global variables
+    # This is equivalent to terminating a session
+    # The OBD data will be ignored if the session is not active
+    current_session_id = None
+    current_session_name = None
+
+    # Reset the frame count obd and last second obd
+    frame_count_obd = 0
+    last_second_obd = None
+
     # Handle response
     if errors:
         status_code = 500 if len(errors) == 2 else 207
@@ -1116,146 +1514,3 @@ def both_streams_stop():
         {"message": "All streams stopped successfully", "details": success_messages},
         200,
     )
-
-
-@realtime_camera_stream_handling.route("/face_stream_view")
-def face_stream_view():
-    global face_stream_data_buffer
-
-    def generate():
-        while True:
-            try:
-                while not face_stream_data_buffer.empty():
-                    frame = face_stream_data_buffer.get_nowait()
-                    yield f"data: {json.dumps(frame)}\n\n"
-            except queue.Empty:
-                pass
-            time.sleep(0.05)
-
-    response = Response(generate(), mimetype="text/event-stream")
-    response.headers.add("Access-Control-Allow-Origin", "*")  # Or specific origin
-    response.headers.add("Cache-Control", "no-cache")
-    response.headers.add("Connection", "keep-alive")
-    return response
-
-
-@realtime_camera_stream_handling.route("/body_stream_view")
-def body_stream_view():
-    global body_stream_data_buffer
-
-    def generate():
-        while True:
-            try:
-                while not body_stream_data_buffer.empty():
-                    frame = body_stream_data_buffer.get_nowait()
-                    yield f"data: {json.dumps(frame)}\n\n"
-            except queue.Empty:
-                pass
-            time.sleep(0.05)
-
-    response = Response(generate(), mimetype="text/event-stream")
-    response.headers.add("Access-Control-Allow-Origin", "*")  # Or specific origin
-    response.headers.add("Cache-Control", "no-cache")
-    response.headers.add("Connection", "keep-alive")
-    return response
-
-
-@realtime_camera_stream_handling.route("/face_stream_start")
-def face_stream_start():
-    global face_processing_thread
-
-    if face_processing_thread and face_processing_thread.is_alive():
-        return make_response("Face processing thread already running", 409)
-
-    # Resolve the IP
-    face_ip = resolve_mdns_via_zeroconf(FACE_STREAM_MDNS_NAME)
-    if face_ip:
-        face_url = f"http://{face_ip}/stream"
-    else:
-        face_url = f"http://{FACE_STREAM_MDNS_NAME}/stream"
-
-    logger.info(f"Face camera => {face_url}")
-    sessionId = uuid.uuid4()
-
-    face_processing_thread = threading.Thread(
-        target=process_stream_face, args=(face_url, sessionId)
-    )
-    face_processing_thread.start()
-    return make_response(f"Face processing started for session {sessionId}", 200)
-
-
-@realtime_camera_stream_handling.route("/face_stream_stop")
-def face_stream_stop():
-    global face_processing_thread, face_thread_kill
-
-    try:
-        if not face_processing_thread:
-            return make_response("No processing thread running", 200)
-
-        if not face_processing_thread.is_alive():
-            face_processing_thread = None
-            return make_response("Thread already stopped", 200)
-
-        face_thread_kill = True
-        face_processing_thread.join(timeout=5.0)
-
-        if face_processing_thread.is_alive():
-            return make_response("Failed to stop thread within timeout", 500)
-
-        face_thread_kill = False
-        face_processing_thread = None
-        return make_response("Face processing stopped successfully", 200)
-
-    except Exception as e:
-        logger.error(f"Error stopping face processing thread: {str(e)}")
-        return make_response(f"Error stopping thread: {str(e)}", 500)
-
-
-@realtime_camera_stream_handling.route("/body_stream_start")
-def body_stream_start():
-    global body_processing_thread
-
-    if body_processing_thread and body_processing_thread.is_alive():
-        return make_response("Body processing thread already running", 409)
-
-    body_ip = resolve_mdns_via_zeroconf(BODY_STREAM_MDNS_NAME)
-    if body_ip:
-        body_url = f"http://{body_ip}/stream"
-    else:
-        body_url = f"http://{BODY_STREAM_MDNS_NAME}/stream"
-
-    logger.info(f"Body camera => {body_url}")
-    sessionId = uuid.uuid4()
-
-    body_processing_thread = threading.Thread(
-        target=process_stream_body, args=(body_url, sessionId)
-    )
-    body_processing_thread.start()
-    return make_response(f"Body processing started for session {sessionId}", 200)
-
-
-@realtime_camera_stream_handling.route("/body_stream_stop")
-def body_stream_stop():
-    global body_processing_thread, body_thread_kill
-
-    try:
-        if not body_processing_thread:
-            return make_response("No processing thread running", 200)
-
-        if not body_processing_thread.is_alive():
-            body_processing_thread = None
-            return make_response("Thread already stopped", 200)
-
-        body_thread_kill = True
-        body_processing_thread.join(timeout=5.0)  # Add timeout to prevent hanging
-
-        if body_processing_thread.is_alive():
-            return make_response("Failed to stop thread within timeout", 500)
-
-        body_thread_kill = False
-        body_processing_thread = None
-        return make_response("Processing stopped successfully", 200)
-
-    except Exception as e:
-        logger.error(f"Error stopping body processing thread: {str(e)}")
-        return make_response(f"Error stopping thread: {str(e)}", 500)
