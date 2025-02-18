@@ -1178,13 +1178,38 @@ def save_obd_frames_to_firestore():
 
 
 def process_obd_data(obd_data):
-    global last_second_obd, frame_count_obd, obd_frame_buffer_db, obd_cursecond_buffer
-    # Get current server timestamp in seconds
-    current_timestamp = int(time.time())
+    """
+    Process a single OBD data frame.
 
-    # If this is a new second, process the previous second's data
+    This function performs two major tasks:
+      1. If a new second has begun, it aggregates all OBD frames received during
+         the previous second. It computes average values for numerical metrics
+         and a majority vote for boolean flags. It then pushes the aggregated record
+         into the Firestore DB buffer (and calls the DB save function if needed),
+         while logging detailed pipeline timing.
+      2. It then processes the current frame by adding it to the current-second buffer
+         and updating the live stream buffer.
+
+    The function logs detailed timing for:
+      - Aggregation of per-frame data from the previous second.
+      - The database-buffering operation.
+      - The total processing time for each frame.
+    """
+    global last_second_obd, frame_count_obd, obd_frame_buffer_db, obd_cursecond_buffer
+
+    # Record the start time of the pipeline for this frame.
+    pipeline_start = time.time()
+
+    # Get current server timestamp (in seconds)
+    current_timestamp = int(time.time())
+    logger.debug(f"OBD_STREAM: Received new OBD data at timestamp {current_timestamp}")
+
+    # If we've rolled into a new second, finalize the previous second's data.
     if last_second_obd is not None and current_timestamp != last_second_obd:
-        # Gather the per-frame obd data from the previous second
+        finalize_start = time.time()
+        # --- Aggregation Step ---
+        # Extract lists for each measurement from the buffer.
+        aggregation_start = time.time()
         speed_labels = [item["speed"] for item in obd_cursecond_buffer]
         rpm_labels = [item["rpm"] for item in obd_cursecond_buffer]
         check_engine_on_labels = [
@@ -1192,37 +1217,34 @@ def process_obd_data(obd_data):
         ]
         num_dtc_codes_labels = [item["num_dtc_codes"] for item in obd_cursecond_buffer]
 
-        # Take average of non -1 speeds, rpms and num_dtc_codes. Leave avg as -1 if no valid values
+        # Calculate averages for speed, rpm, and num_dtc_codes (ignoring invalid -1 values)
         valid_speeds = [speed for speed in speed_labels if speed != -1]
         avg_speed = sum(valid_speeds) / len(valid_speeds) if valid_speeds else -1
+
         valid_rpms = [rpm for rpm in rpm_labels if rpm != -1]
         avg_rpm = sum(valid_rpms) / len(valid_rpms) if valid_rpms else -1
-        valid_dtc_codes = [
-            num_dtc_codes
-            for num_dtc_codes in num_dtc_codes_labels
-            if num_dtc_codes != -1
-        ]
+
+        valid_dtc_codes = [code for code in num_dtc_codes_labels if code != -1]
         avg_num_dtc_codes = (
             sum(valid_dtc_codes) / len(valid_dtc_codes) if valid_dtc_codes else -1
         )
-        # Take majority of non null check_engine_on. Leave as None if no valid values
+
+        # Determine the majority value for check_engine_on (ignoring None values)
         check_engine_on_counts = Counter(
-            [
-                check_engine_on
-                for check_engine_on in check_engine_on_labels
-                if check_engine_on is not None
-            ]
+            [val for val in check_engine_on_labels if val is not None]
         )
         majority_check_engine_on = (
             check_engine_on_counts.most_common(1)[0][0]
             if check_engine_on_counts
             else None
         )
+        aggregation_elapsed = (time.time() - aggregation_start) * 1000
+        logger.debug(
+            f"OBD_STREAM: Aggregated previous second's data in {aggregation_elapsed:.2f}ms"
+        )
 
-        # Time how long DB operations take (if we do them)
+        # --- DB Buffering Step ---
         db_start_time = time.time()
-
-        # Build a record for Firestore
         record = {
             "timestamp": last_second_obd,
             "speed": avg_speed,
@@ -1231,37 +1253,32 @@ def process_obd_data(obd_data):
             "num_dtc_codes": avg_num_dtc_codes,
         }
 
-        # Store to the DB buffer and DB if needed
+        # Append the aggregated record to the DB buffer, and trigger save if threshold reached.
         if len(obd_frame_buffer_db) < NUM_SECONDS_BEFORE_STORE_IN_DB:
             obd_frame_buffer_db.append(record)
         if len(obd_frame_buffer_db) >= NUM_SECONDS_BEFORE_STORE_IN_DB:
             save_obd_frames_to_firestore()
-
-        # Measure the DB operation time
         db_elapsed = (time.time() - db_start_time) * 1000
 
-        # Clear out the old second’s buffer
+        # Clear the per-second buffer after finalizing the previous second.
         obd_cursecond_buffer.clear()
+        finalize_elapsed = (time.time() - finalize_start) * 1000
 
-        # Log that we've finalized this second
-        logger.debug(
-            f"OBD_STREAM: Finalizing second {last_second_obd}, "
-            f"DB write time={db_elapsed:.2f}ms "
-            f"Speed: {avg_speed}, RPM: {avg_rpm}, Check Engine On: {majority_check_engine_on}, Num DTC Codes: {avg_num_dtc_codes}"
+        logger.info(
+            f"OBD_STREAM: Finalized second {last_second_obd} in {finalize_elapsed:.2f}ms "
+            f"(DB op: {db_elapsed:.2f}ms). Aggregated values - Speed: {avg_speed}, RPM: {avg_rpm}, "
+            f"Check Engine On: {majority_check_engine_on}, Num DTC Codes: {avg_num_dtc_codes}"
         )
 
-    # Per frame pipeline here now
-
-    # Initialize last_second if needed, or update it if the second rolled over
-    if last_second_obd is None:
-        last_second_obd = current_timestamp
-    elif current_timestamp != last_second_obd:
+    # Update the last processed second if necessary.
+    if last_second_obd is None or current_timestamp != last_second_obd:
         last_second_obd = current_timestamp
 
-    # Increment the total frame counter
-    frame_count_body += 1
+    # Increment the frame counter (using frame_count_obd for OBD frames).
+    frame_count_obd += 1
 
-    # Add to cursecond buffer
+    # --- Per-Frame Processing ---
+    # Add current frame data to the per-second buffer.
     obd_cursecond_buffer_entry = {
         "speed": obd_data.get("speed", -1),
         "rpm": obd_data.get("rpm", -1),
@@ -1269,7 +1286,8 @@ def process_obd_data(obd_data):
         "num_dtc_codes": obd_data.get("num_dtc_codes", -1),
     }
     obd_cursecond_buffer.append(obd_cursecond_buffer_entry)
-    # Update live stream buffer with the latest streamed data
+
+    # Build a live-stream buffer entry including a frame counter.
     obd_stream_buffer_entry = {
         "speed": obd_data.get("speed", -1),
         "rpm": obd_data.get("rpm", -1),
@@ -1278,10 +1296,18 @@ def process_obd_data(obd_data):
         "timestamp": current_timestamp,
         "frame_number": frame_count_obd,
     }
-    # Update live stream buffer with the latest streamed data
+
+    # Ensure the live-stream buffer has space; if full, discard the oldest entry.
     if obd_stream_data_buffer.full():
         obd_stream_data_buffer.get_nowait()
     obd_stream_data_buffer.put(obd_stream_buffer_entry)
+
+    total_pipeline_time = (time.time() - pipeline_start) * 1000
+    logger.info(
+        f"OBD_STREAM: Processed frame {frame_count_obd} in {total_pipeline_time:.2f}ms - "
+        f"Speed: {obd_data.get('speed', -1)}, RPM: {obd_data.get('rpm', -1)}, "
+        f"Check Engine On: {obd_data.get('check_engine_on', None)}, Num DTC Codes: {obd_data.get('num_dtc_codes', -1)}"
+    )
 
 
 # PUT ALL OBD STREAM ROUTES BELOW -----------------------------------------------------------------------
@@ -1291,6 +1317,16 @@ def process_obd_data(obd_data):
 # This allows the ESP32 board to send OBD data to the server in real-time
 @realtime_obd_stream_handling.route("/recieve_obd_data", methods=["POST"])
 def recieve_obd_data():
+    """
+    Endpoint to receive OBD data from the ESP32 board in real time.
+
+    This route:
+      - Verifies that a drive session is active.
+      - Retrieves the JSON OBD data payload.
+      - Checks for any missing fields (none are required currently).
+      - Passes the data to process_obd_data() for processing.
+      - Logs and returns an appropriate HTTP response.
+    """
     global obd_stream_data_buffer, current_session_id
 
     if not current_session_id:
@@ -1298,11 +1334,10 @@ def recieve_obd_data():
         return make_response("No active session found", 400)
 
     obd_data = request.get_json() or {}
-    required_obd_fields = []  # No fields required for now
+    required_obd_fields = []  # No mandatory fields defined for now.
     missing_obd_fields = [
         field for field in required_obd_fields if field not in obd_data
     ]
-    # Check if all required fields are present, ignore data if not
     if missing_obd_fields:
         logger.error(
             f"OBD_STREAM: Data Ignored, Missing required fields: {missing_obd_fields}"
@@ -1311,8 +1346,8 @@ def recieve_obd_data():
             f"Data Ignored, Missing required fields: {missing_obd_fields}", 400
         )
 
+    # Process the received OBD data.
     process_obd_data(obd_data)
-
     logger.debug(f"OBD_STREAM: Data received and processed: {obd_data}")
     return make_response("Data received and processed", 200)
 
