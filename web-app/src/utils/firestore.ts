@@ -13,7 +13,8 @@ export const getData = async (collectionName: string) => {
 }
 
 export const getDocumentsByRecentSession = async (collectionName: string) => {
-  const querySnapshot = await getDocs(collection(db, collectionName)).limit(20);
+  const q = query(collection(db, collectionName), limit(20)); 
+  const querySnapshot = await getDocs(q)
   if (querySnapshot.empty) {
       console.log('No matching documents.');
       return [];
