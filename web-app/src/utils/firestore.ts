@@ -12,6 +12,7 @@ export const getData = async (collectionName: string) => {
     return documents;
 }
 
+// This needs to be updated later
 export const getDocumentsByRecentSession = async (collectionName: string) => {
   const q = query(collection(db, collectionName), limit(20)); 
   const querySnapshot = await getDocs(q)
