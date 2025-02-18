@@ -1,4 +1,4 @@
-import React, { useEffect } from "react";
+import React from "react";
 import styles from "./SideBar.module.css";
 import { Box, Typography } from "@mui/material";
 import Image from "next/image";
@@ -17,10 +17,6 @@ const anonymous = Anonymous_Pro({ weight: "700", subsets: ["latin"] });
 const SideBar = () => {
   const router = useRouter();
   const pathName = usePathname();
-
-  useEffect(() => {
-    console.log("Current path: ", pathName);
-  }, []);
 
   return (
     <Box className={styles.sideBar}>

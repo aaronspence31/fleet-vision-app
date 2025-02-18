@@ -76,6 +76,7 @@ export const getDateTimeValues = (unixTimestamp: number) => {
 const getSafetyScore = (frameBatch: FrameBatchType) => {
   let score = 0;
   frameBatch.frames.forEach((frame: string) => {
+    // @ts-ignore
     const frameScore = safetyScoreMap[frame];
     if (frameScore) {
       score += frameScore.scoreModifier;
