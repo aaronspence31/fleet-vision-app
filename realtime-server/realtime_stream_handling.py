@@ -1276,7 +1276,7 @@ def process_obd_data(obd_data):
         }
 
         # Append the aggregated record to the DB buffer, and trigger save if threshold reached.
-        if obd_frame_buffer_db.qsize() < NUM_SECONDS_BEFORE_STORE_IN_DB:    
+        if obd_frame_buffer_db.qsize() < NUM_SECONDS_BEFORE_STORE_IN_DB:
             obd_frame_buffer_db.put(record)
         if obd_frame_buffer_db.qsize() >= NUM_SECONDS_BEFORE_STORE_IN_DB:
             save_obd_frames_to_firestore()
@@ -1335,8 +1335,8 @@ def process_obd_data(obd_data):
 
 # The ESP32 board will make requests to this endpoint as many times as it can per second
 # This allows the ESP32 board to send OBD data to the server in real-time
-@realtime_obd_stream_handling.route("/recieve_obd_data", methods=["POST"])
-def recieve_obd_data():
+@realtime_obd_stream_handling.route("/receive_obd_data", methods=["POST"])
+def receive_obd_data():
     """
     Endpoint to receive OBD data from the ESP32 board in real time.
 
