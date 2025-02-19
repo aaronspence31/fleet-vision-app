@@ -159,8 +159,8 @@ def resolve_mdns_via_zeroconf(hostname: str) -> str:
 # Each session will also be given a created_at_value and optionally a session_name if one was provided when the session was made
 # face_drive_sessions/<sessionId>/face_drive_session_classifications/<timestamp>
 # there will be a eye_classification and mouth_classification field with the final classification for that second
-# String Eyes State classifications are "Eyes Open", "Eyes Closed" or "Unknown"
-# String Mouth State classifications are "Mouth Open", "Mouth Closed" or "Unknown"
+# String Eyes State classifications are "Eyes Open", "Eyes Closed" or ""
+# String Mouth State classifications are "Mouth Open", "Mouth Closed" or ""
 def save_face_frames_to_firestore():
     """
     Saves classification data to Firestore under a document named after sessionId
@@ -257,8 +257,8 @@ def compute_MAR(mouth):
 
 
 # Main face stream processing function
-# Eyes State Predictions are Eyes Open, Eyes Closed or Unknown
-# Mouth State Predictions are Mouth Open, Mouth Closed or Unknown
+# Eyes State Predictions are "Eyes Open", "Eyes Closed" or ""
+# Mouth State Predictions are "Mouth Open", "Mouth Closed" or ""
 # Used paper here https://pmc.ncbi.nlm.nih.gov/articles/PMC11398282/
 def process_stream_face(url):
     """
@@ -401,8 +401,8 @@ def process_stream_face(url):
         frame_count_face += 1
 
         # Default classifications/metrics
-        eye_classification = "Unknown"
-        mouth_classification = "Unknown"
+        eye_classification = ""
+        mouth_classification = ""
         ear_score = None
         mar_score = None
 
@@ -590,7 +590,7 @@ def process_stream_face(url):
 # body_drive_sessions/<sessionId>/body_drive_session_classifications/<timestamp>
 # there will be a single classification field with the final String classification for that second
 # Expect  "Driving Safely", "Drinking beverage", "Adjusting hair, glasses, or makeup", "Talking on phone",
-# "Reaching beside or behind", "Talking to passenger", "Texting/using phone", "Yawning" and "Unknown" as possible classifications
+# "Reaching beside or behind", "Talking to passenger", "Texting/using phone", "Yawning" and "" as possible classifications
 def save_body_frames_to_firestore():
     """
     Saves classification data to Firestore under a document named after sessionId
@@ -713,7 +713,7 @@ def detect_person_in_frame(frame, scale_factor=1.2, min_neighbors=1):
 
 
 # Main body stream processing function
-# Expect body_stream_index_to_label classifications and Unknown as possible predictions on each frame
+# Expect body_stream_index_to_label classifications and "" as possible predictions on each frame
 def process_stream_body(url):
     """
     Main body stream processing function.
@@ -855,7 +855,7 @@ def process_stream_body(url):
         frame_count_body += 1
 
         # Default label and probability
-        prediction_label = "Unknown"
+        prediction_label = ""
         prob_score = None
 
         # Create a copy for visualization
@@ -885,22 +885,25 @@ def process_stream_body(url):
                 prediction_start = time.time()
                 prediction = int(clip_classifier_body.predict(features)[0])
                 prob_score = clip_classifier_body.predict_proba(features)[0][prediction]
-                prediction_label = body_stream_index_to_label.get(prediction, "Unknown")
+                prediction_label = body_stream_index_to_label.get(prediction, "")
                 prediction_time = (time.time() - prediction_start) * 1000
 
                 # Set text color based on whether it's "Driving Safely," "Unknown," or other unsafe behavior
                 if prediction_label == "Driving Safely":
+                    drawn_text = prediction_label
                     text_color = (0, 255, 0)  # Green
-                elif prediction_label == "Unknown":
+                elif prediction_label == "":
+                    drawn_text = "Unknown"
                     text_color = (0, 165, 255)  # Orange
                 else:
+                    drawn_text = prediction_label
                     text_color = (0, 0, 255)  # Red
 
                 # Draw the prediction + probability in the top-right corner of the frame
                 font = cv2.FONT_HERSHEY_SIMPLEX
                 font_scale = 0.8
                 thickness = 2
-                text_to_draw = f"{prediction_label} ({prob_score:.2f})"
+                text_to_draw = f"{drawn_text} ({prob_score:.2f})"
 
                 (text_width, text_height), baseline = cv2.getTextSize(
                     text_to_draw, font, font_scale, thickness

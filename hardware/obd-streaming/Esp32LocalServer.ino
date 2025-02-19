@@ -1,6 +1,7 @@
 #include <WiFi.h>
 #include <ArduinoJson.h>
 #include <HTTPClient.h>
+#include <WiFiClientSecure.h>
 
 // const char *ssid = "Aaron iPhone 15";
 // const char *password = "12345678";
@@ -12,12 +13,16 @@ const int UART_BAUD = 9600;
 const int RX2_PIN = 16;
 const int TX2_PIN = 17;
 
+WiFiClientSecure client;
+
 void sendJsonToServer(const String &jsonData)
 {
   if (WiFi.status() == WL_CONNECTED)
   {
+    client.setInsecure();
+
     HTTPClient http;
-    http.begin("https://ghastly-singular-snake.ngrok.app:80/receive_obd_data");
+    http.begin(client, "https://ghastly-singular-snake.ngrok.app/receive_obd_data");
 
     http.addHeader("Content-Type", "application/json");
 
