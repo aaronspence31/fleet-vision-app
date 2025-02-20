@@ -48,5 +48,5 @@
 .buttonContainer {
   display: flex;
   justify-content: center;
-  margin: 16px 0;
+  margin: 16px 0 32px 0; /* top 16px, right 0, bottom 32px, left 0 */
 }
