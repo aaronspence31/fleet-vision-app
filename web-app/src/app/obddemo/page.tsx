@@ -28,7 +28,7 @@ export default function ObdDemo() {
     frameEventSource.onmessage = (event) => {
       const data: ObdFrame = JSON.parse(event.data);
       // Expecting: speed, rpm, check_engine_on, num_dtc_codes, timestamp, frame_number
-      setFrameData((prev) => [data, ...prev.slice(0, 199)]);
+      setFrameData((prev) => [data, ...prev].slice(0, 5));
     };
     return () => frameEventSource.close();
   }, []);
@@ -41,7 +41,7 @@ export default function ObdDemo() {
     aggregatedEventSource.onmessage = (event) => {
       const data: ObdAggregated = JSON.parse(event.data);
       // Expecting: speed (avg), rpm (avg), check_engine_on (majority), num_dtc_codes (avg), timestamp
-      setAggregatedData((prev) => [data, ...prev]);
+      setAggregatedData((prev) => [data, ...prev].slice(0, 5));
     };
     return () => aggregatedEventSource.close();
   }, []);

@@ -46,7 +46,7 @@ export default function BodyDemo() {
     );
     aggregatedEventSource.onmessage = (event) => {
       const data: AggregatedBodyClassification = JSON.parse(event.data);
-      setAggregatedData((prev) => [data, ...prev]);
+      setAggregatedData((prev) => [data, ...prev].slice(0, 5));
     };
     return () => aggregatedEventSource.close();
   }, []);
@@ -61,7 +61,7 @@ export default function BodyDemo() {
       {/* Per-frame image section */}
       <Box className={styles.section}>
         <Typography variant="h6" textAlign="center" gutterBottom>
-          Body Feed With Real Time Predictions
+          Body Feed With Real Time Frame Predictions
         </Typography>
         <Box className={styles.cameraContainer}>
           <Box className={styles.cameraWrapper}>
