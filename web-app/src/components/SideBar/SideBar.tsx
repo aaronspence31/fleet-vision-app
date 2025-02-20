@@ -78,7 +78,7 @@ const SideBar = () => {
             className={anonymous.className}
             sx={{ typography: { xl: "h5", lg: "h6" } }}
           >
-            Face Stream Demo
+            Face Feed
           </Typography>
         </Box>
         <Box
@@ -93,7 +93,7 @@ const SideBar = () => {
             className={anonymous.className}
             sx={{ typography: { xl: "h5", lg: "h6" } }}
           >
-            Body Stream Demo
+            Body Feed
           </Typography>
         </Box>
         <Box
@@ -108,7 +108,7 @@ const SideBar = () => {
             className={anonymous.className}
             sx={{ typography: { xl: "h5", lg: "h6" } }}
           >
-            OBD Stream Demo
+            OBD Feed
           </Typography>
         </Box>
       </Box>
