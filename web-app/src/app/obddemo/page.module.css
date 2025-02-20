@@ -1,0 +1,26 @@
+/* page.module.css */
+
+.pageContainer {
+  padding: 16px;
+  max-height: 100vh;
+  overflow-y: auto;
+  background-color: #f5f5f5;
+}
+
+/* Add a margin between sections */
+.section {
+  margin-bottom: 32px;
+}
+
+/* Table container with a fixed max height so it scrolls if content is long */
+.tableContainer {
+  margin-bottom: 32px;
+  max-height: 400px;
+  overflow-y: auto;
+}
+
+/* Styling for the table header */
+.tableHeader {
+  background-color: #1976d2;
+  color: white;
+}

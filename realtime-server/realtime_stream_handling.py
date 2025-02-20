@@ -1089,8 +1089,10 @@ def body_stream_view():
 ######################################################################################
 ######################################################################################
 
-# Thread safe buffer for viewing the obd streams in real-time
+# Thread safe buffer for viewing the obd streams in real-time per frame
 obd_stream_data_buffer = Queue(maxsize=1)
+# Thread safe buffer for viewing the obd streams in real-time per second
+obd_stream_second_data_buffer = Queue(maxsize=1)
 # Setup buffer to hold the obd data for all frames in the current second
 obd_cursecond_buffer = Queue()
 # Setup db streaming buffer
@@ -1244,13 +1246,13 @@ def process_obd_data(obd_data):
 
         # Calculate averages for speed, rpm, and num_dtc_codes (ignoring invalid -1 values)
         valid_speeds = [speed for speed in speed_labels if speed != -1]
-        avg_speed = sum(valid_speeds) / len(valid_speeds) if valid_speeds else -1
+        avg_speed = int(sum(valid_speeds) / len(valid_speeds) if valid_speeds else -1)
 
         valid_rpms = [rpm for rpm in rpm_labels if rpm != -1]
-        avg_rpm = sum(valid_rpms) / len(valid_rpms) if valid_rpms else -1
+        avg_rpm = int(sum(valid_rpms) / len(valid_rpms) if valid_rpms else -1)
 
         valid_dtc_codes = [code for code in num_dtc_codes_labels if code != -1]
-        avg_num_dtc_codes = (
+        avg_num_dtc_codes = int(
             sum(valid_dtc_codes) / len(valid_dtc_codes) if valid_dtc_codes else -1
         )
 
@@ -1284,6 +1286,19 @@ def process_obd_data(obd_data):
         if obd_frame_buffer_db.qsize() >= NUM_SECONDS_BEFORE_STORE_IN_DB:
             save_obd_frames_to_firestore()
         db_elapsed = (time.time() - db_start_time) * 1000
+
+        # Optionally also push a per second entry to the front-end
+        obd_stream_second_buffer_entry = {
+            "speed": avg_speed,
+            "rpm": avg_rpm,
+            "check_engine_on": majority_check_engine_on,
+            "num_dtc_codes": avg_num_dtc_codes,
+            "timestamp": last_second_obd,
+        }
+        # Ensure the per second live-stream buffer has space; if full, discard the oldest entry.
+        if obd_stream_second_data_buffer.full():
+            obd_stream_second_data_buffer.get_nowait()
+        obd_stream_second_data_buffer.put(obd_stream_second_buffer_entry)
 
         finalize_elapsed = (time.time() - finalize_start) * 1000
 
@@ -1375,8 +1390,8 @@ def receive_obd_data():
     return make_response("Data received and processed", 200)
 
 
-@realtime_obd_stream_handling.route("/obd_stream_view")
-def obd_stream_view():
+@realtime_obd_stream_handling.route("/obd_per_frame_stream_view")
+def obd_per_frame_stream_view():
     global obd_stream_data_buffer
 
     def generate():
@@ -1384,7 +1399,27 @@ def obd_stream_view():
             try:
                 while not obd_stream_data_buffer.empty():
                     obd_data = obd_stream_data_buffer.get_nowait()
-                    logger.debug(f"Streamed OBD data: {obd_data}")
+                    yield f"data: {json.dumps(obd_data)}\n\n"
+            except queue.Empty:
+                pass
+            time.sleep(0.05)
+
+    response = Response(generate(), mimetype="text/event-stream")
+    response.headers.add("Access-Control-Allow-Origin", "*")
+    response.headers.add("Cache-Control", "no-cache")
+    response.headers.add("Connection", "keep-alive")
+    return response
+
+
+@realtime_obd_stream_handling.route("/obd_per_second_stream_view")
+def obd_per_second_stream_view():
+    global obd_stream_second_data_buffer
+
+    def generate():
+        while True:
+            try:
+                while not obd_stream_second_data_buffer.empty():
+                    obd_data = obd_stream_second_data_buffer.get_nowait()
                     yield f"data: {json.dumps(obd_data)}\n\n"
             except queue.Empty:
                 pass

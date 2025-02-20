@@ -68,6 +68,21 @@ const SideBar = () => {
         <Box
           className={[
             styles.iconContainer,
+            pathName == "/facedemo" && styles.selectedPage,
+          ].join(" ")}
+          onClick={() => router.push("/facedemo")}
+        >
+          <Face className={styles.icon} />
+          <Typography
+            className={anonymous.className}
+            sx={{ typography: { xl: "h5", lg: "h6" } }}
+          >
+            Face Stream Demo
+          </Typography>
+        </Box>
+        <Box
+          className={[
+            styles.iconContainer,
             pathName == "/bodydemo" && styles.selectedPage,
           ].join(" ")}
           onClick={() => router.push("/bodydemo")}
@@ -83,16 +98,16 @@ const SideBar = () => {
         <Box
           className={[
             styles.iconContainer,
-            pathName == "/facedemo" && styles.selectedPage,
+            pathName == "/obddemo" && styles.selectedPage,
           ].join(" ")}
-          onClick={() => router.push("/facedemo")}
+          onClick={() => router.push("/obddemo")}
         >
-          <Face className={styles.icon} />
+          <Accessibility className={styles.icon} />
           <Typography
             className={anonymous.className}
             sx={{ typography: { xl: "h5", lg: "h6" } }}
           >
-            Face Stream Demo
+            OBD Stream Demo
           </Typography>
         </Box>
       </Box>
