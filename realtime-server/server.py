@@ -1,5 +1,9 @@
 from flask import Flask
-from realtime_stream_handling import realtime_camera_stream_handling, realtime_obd_stream_handling
+from realtime_stream_handling import (
+    realtime_camera_stream_handling,
+    realtime_obd_stream_handling,
+    session_handling,
+)
 import logging
 from flask_cors import CORS
 import os
@@ -20,6 +24,7 @@ logger = logging.getLogger(__name__)
 app = Flask(__name__)
 app.register_blueprint(realtime_camera_stream_handling)
 app.register_blueprint(realtime_obd_stream_handling)
+app.register_blueprint(session_handling)
 CORS(app)
 
 

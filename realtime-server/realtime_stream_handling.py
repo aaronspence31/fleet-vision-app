@@ -25,6 +25,7 @@ import socket
 # This file defines the Flask blueprints for handling the real-time camera and OBD streams.
 realtime_camera_stream_handling = Blueprint("realtime_camera_stream_handling", __name__)
 realtime_obd_stream_handling = Blueprint("realtime_obd_stream_handling", __name__)
+session_handling = Blueprint("session_handling", __name__)
 
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
@@ -1468,7 +1469,7 @@ def obd_per_second_stream_view():
 
 # Start both stream processing functions as part of the same session and set the global session variables
 # to the new session ID and name.
-@realtime_camera_stream_handling.route("/start_drive_session", methods=["POST"])
+@session_handling.route("/start_drive_session", methods=["POST"])
 def start_drive_session():
     global body_processing_thread, face_processing_thread, current_session_id, current_session_name
     global frame_count_obd, last_second_obd
@@ -1546,7 +1547,7 @@ def start_drive_session():
 
 # Attempt to stop the entire drive session by stopping both stream processing functions and
 # resetting the global session variables so the OBD data is ignored
-@realtime_camera_stream_handling.route("/stop_drive_session", methods=["POST"])
+@session_handling.route("/stop_drive_session", methods=["POST"])
 def stop_drive_session():
     global body_processing_thread, body_thread_kill, face_processing_thread, face_thread_kill
     global current_session_id, current_session_name
@@ -1634,3 +1635,17 @@ def stop_drive_session():
         {"message": "Successfully stopped drive session", "details": success_messages},
         200,
     )
+
+
+@session_handling.route("/is_session_active", methods=["GET"])
+def is_session_active():
+    """
+    Check if a drive session is currently active by checking if current_session_id is non-null.
+    Return 200 if active, 404 if not.
+    """
+    global current_session_id
+
+    is_active = current_session_id is not None
+    logger.debug(f"Session active check - Result: {is_active}")
+
+    return make_response("", 200 if is_active else 404)
