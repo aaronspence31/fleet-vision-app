@@ -46,7 +46,7 @@ export default function FaceDemo() {
     );
     aggregatedEventSource.onmessage = (event) => {
       const data: AggregatedFaceClassification = JSON.parse(event.data);
-      setAggregatedData((prev) => [data, ...prev].slice(0, 5));
+      setAggregatedData((prev) => [data, ...prev].slice(0, 3));
     };
     return () => aggregatedEventSource.close();
   }, []);

@@ -46,7 +46,7 @@ export default function BodyDemo() {
     );
     aggregatedEventSource.onmessage = (event) => {
       const data: AggregatedBodyClassification = JSON.parse(event.data);
-      setAggregatedData((prev) => [data, ...prev].slice(0, 5));
+      setAggregatedData((prev) => [data, ...prev].slice(0, 3));
     };
     return () => aggregatedEventSource.close();
   }, []);
