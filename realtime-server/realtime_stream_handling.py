@@ -800,23 +800,13 @@ def process_stream_body(url):
                 # Measure time spent in DB logic (including function call)
                 db_elapsed = (time.time() - db_start_time) * 1000
 
-                # 3) Optionally also push a “final” entry to the front-end
-                current_entry = None
-                if body_stream_data_buffer.full():
-                    current_entry = body_stream_data_buffer.get_nowait()
-
-                # If the stream viewer code already got the entry, image can be None
-                image_from_entry = (
-                    current_entry.get("image", None) if current_entry else None
-                )
-                body_stream_data_buffer.put(
+                # 3) Push a per second entry to the front-end
+                if body_stream_second_data_buffer.full():
+                    body_stream_second_data_buffer.get_nowait()
+                body_stream_second_data_buffer.put(
                     {
-                        "image": image_from_entry,
                         "prediction": majority_label,
-                        "probability": None,
-                        "frame_number": None,
                         "timestamp": last_second,
-                        "processing_time": None,
                     }
                 )
 
@@ -1024,8 +1014,8 @@ def process_stream_body(url):
         body_stream_data_buffer.put(
             {
                 "image": frame_base64,
-                "prediction": None,  # Hide final classification until we do majority vote
-                "probability": None,  # Hide probability until final
+                "prediction": prediction_label,
+                "probability": prob_score,
                 "frame_number": frame_count_body,
                 "timestamp": now_second,
                 "processing_time": total_time,
@@ -1078,8 +1068,8 @@ def face_per_second_stream_view():
     return response
 
 
-@realtime_camera_stream_handling.route("/body_stream_view")
-def body_stream_view():
+@realtime_camera_stream_handling.route("/body_per_frame_stream_view")
+def body_per_frame_stream_view():
     global body_stream_data_buffer
 
     def generate():
@@ -1087,6 +1077,27 @@ def body_stream_view():
             try:
                 while not body_stream_data_buffer.empty():
                     frame = body_stream_data_buffer.get_nowait()
+                    yield f"data: {json.dumps(frame)}\n\n"
+            except queue.Empty:
+                pass
+            time.sleep(0.05)
+
+    response = Response(generate(), mimetype="text/event-stream")
+    response.headers.add("Access-Control-Allow-Origin", "*")
+    response.headers.add("Cache-Control", "no-cache")
+    response.headers.add("Connection", "keep-alive")
+    return response
+
+
+@realtime_camera_stream_handling.route("/body_per_second_stream_view")
+def body_per_second_stream_view():
+    global body_stream_second_data_buffer
+
+    def generate():
+        while True:
+            try:
+                while not body_stream_second_data_buffer.empty():
+                    frame = body_stream_second_data_buffer.get_nowait()
                     yield f"data: {json.dumps(frame)}\n\n"
             except queue.Empty:
                 pass
