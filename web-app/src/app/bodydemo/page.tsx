@@ -23,9 +23,9 @@ export default function BodyDemo() {
   useEffect(() => {
     async function checkSession() {
       try {
-        const res = await fetch("/is_session_active");
+        const res = await fetch("https://ghastly-singular-snake.ngrok.app/is_session_active");
         if (res.status === 404) {
-          const startRes = await fetch("/start_drive_session", {
+          const startRes = await fetch("https://ghastly-singular-snake.ngrok.app/start_drive_session", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ session_name: "default" }),
