@@ -143,7 +143,7 @@ export default function BodyDemo() {
         </Button>
       </Box>
       {/* Per-frame image section */}
-      <Box className={styles.section}>
+      <Box className={`${styles.section} margin-top-class`}>
         <Typography variant="h6" textAlign="center" gutterBottom>
           Body Feed With Real Time Frame Classifications
         </Typography>

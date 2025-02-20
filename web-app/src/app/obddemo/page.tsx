@@ -136,7 +136,7 @@ export default function ObdDemo() {
         </Button>
       </Box>
 
-      <Box className={styles.section}>
+      <Box className={`${styles.section} margin-top-class`}>
         <Typography variant="h5" textAlign="center" gutterBottom>
           OBD Data – Per Frame
         </Typography>

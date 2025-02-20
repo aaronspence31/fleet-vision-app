@@ -12,6 +12,11 @@
   margin-bottom: 32px;
 }
 
+/* Add a margin to the top of an element */
+.margin-top-class {
+  margin-top: 16px;
+}
+
 /* Table container with a fixed max height so it scrolls if content is long */
 .tableContainer {
   margin-bottom: 32px;
@@ -29,5 +34,5 @@
 .buttonContainer {
   display: flex;
   justify-content: center;
-  margin: 16px 0 32px 0; /* top 16px, right 0, bottom 32px, left 0 */
+  margin: 16px 0;
 }

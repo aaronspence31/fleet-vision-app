@@ -10,6 +10,10 @@
   margin-bottom: 32px;
 }
 
+.margin-top-class {
+  margin-top: 16px;
+}
+
 .cameraContainer {
   display: flex;
   flex-direction: column;
@@ -48,5 +52,5 @@
 .buttonContainer {
   display: flex;
   justify-content: center;
-  margin: 16px 0 32px 0; /* top 16px, right 0, bottom 32px, left 0 */
+  margin: 16px 0;
 }
