@@ -11,6 +11,7 @@ import {
   TableRow,
   Paper,
   Button,
+  TextField,
 } from "@mui/material";
 import Image from "next/image";
 import styles from "./page.module.css";
@@ -19,6 +20,7 @@ import { ServerResponse, AggregatedFaceClassification } from "./types";
 export default function FaceDemo() {
   const [driveSessionActive, setDriveSessionActive] = useState(false);
   const [loadingSession, setLoadingSession] = useState(true);
+  const [sessionName, setSessionName] = useState("");
 
   // Check session status on page load
   useEffect(() => {
@@ -46,7 +48,7 @@ export default function FaceDemo() {
       const res = await fetch("https://ghastly-singular-snake.ngrok.app/start_drive_session", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ session_name: "default" }),
+        body: JSON.stringify({ session_name: sessionName ? sessionName : "default" }),
       });
       if (res.ok) {
         setDriveSessionActive(true);
@@ -64,7 +66,7 @@ export default function FaceDemo() {
       const res = await fetch("https://ghastly-singular-snake.ngrok.app/stop_drive_session", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ session_name: "default" }),
+        body: JSON.stringify({ session_name: sessionName ? sessionName : "default" }),
       });
       if (res.ok) {
         setDriveSessionActive(false);
@@ -113,7 +115,6 @@ export default function FaceDemo() {
     return prediction.trim() === "" ? "Unknown" : prediction;
   };
 
-  // Render loading state
   if (loadingSession) {
     return (
       <Box className={styles.pageContainer} textAlign="center" mt={4}>
@@ -122,10 +123,17 @@ export default function FaceDemo() {
     );
   }
 
-  // Render start button if no session is active
   if (!driveSessionActive) {
     return (
       <Box className={styles.pageContainer} textAlign="center" mt={4}>
+        <TextField
+          label="Session Name (optional)"
+          variant="outlined"
+          value={sessionName}
+          onChange={(e) => setSessionName(e.target.value)}
+          style={{ marginBottom: "16px" }}
+        />
+        <br />
         <Button variant="contained" color="success" onClick={handleStartDriveSession}>
           Start Drive Session
         </Button>
@@ -133,7 +141,6 @@ export default function FaceDemo() {
     );
   }
 
-  // Render main content if a session is active
   return (
     <Box className={styles.pageContainer}>
       {/* Red Stop Session Button at the top */}

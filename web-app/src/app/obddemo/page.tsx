@@ -11,6 +11,7 @@ import {
   TableRow,
   Paper,
   Button,
+  TextField,
 } from "@mui/material";
 import styles from "./page.module.css";
 import { ObdFrame, ObdAggregated } from "./types";
@@ -18,6 +19,7 @@ import { ObdFrame, ObdAggregated } from "./types";
 export default function ObdDemo() {
   const [driveSessionActive, setDriveSessionActive] = useState(false);
   const [loadingSession, setLoadingSession] = useState(true);
+  const [sessionName, setSessionName] = useState("");
 
   // Check session status on page load
   useEffect(() => {
@@ -39,13 +41,12 @@ export default function ObdDemo() {
     checkSession();
   }, []);
 
-  // Handler to start a drive session
   async function handleStartDriveSession() {
     try {
       const res = await fetch("https://ghastly-singular-snake.ngrok.app/start_drive_session", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ session_name: "default" }),
+        body: JSON.stringify({ session_name: sessionName ? sessionName : "default" }),
       });
       if (res.ok) {
         setDriveSessionActive(true);
@@ -57,13 +58,12 @@ export default function ObdDemo() {
     }
   }
 
-  // Handler to stop the drive session
   async function handleStopDriveSession() {
     try {
       const res = await fetch("https://ghastly-singular-snake.ngrok.app/stop_drive_session", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ session_name: "default" }),
+        body: JSON.stringify({ session_name: sessionName ? sessionName : "default" }),
       });
       if (res.ok) {
         setDriveSessionActive(false);
@@ -75,12 +75,9 @@ export default function ObdDemo() {
     }
   }
 
-  // State for per-frame OBD data
   const [frameData, setFrameData] = useState<ObdFrame[]>([]);
-  // State for per-second aggregated OBD data
   const [aggregatedData, setAggregatedData] = useState<ObdAggregated[]>([]);
 
-  // Start the per-frame stream when a session is active
   useEffect(() => {
     if (!driveSessionActive) return;
     const frameEventSource = new EventSource(
@@ -93,7 +90,6 @@ export default function ObdDemo() {
     return () => frameEventSource.close();
   }, [driveSessionActive]);
 
-  // Start the aggregated stream when a session is active
   useEffect(() => {
     if (!driveSessionActive) return;
     const aggregatedEventSource = new EventSource(
@@ -106,7 +102,6 @@ export default function ObdDemo() {
     return () => aggregatedEventSource.close();
   }, [driveSessionActive]);
 
-  // Render loading state
   if (loadingSession) {
     return (
       <Box className={styles.pageContainer} textAlign="center" mt={4}>
@@ -115,10 +110,17 @@ export default function ObdDemo() {
     );
   }
 
-  // Render start button if no session is active
   if (!driveSessionActive) {
     return (
       <Box className={styles.pageContainer} textAlign="center" mt={4}>
+        <TextField
+          label="Session Name (optional)"
+          variant="outlined"
+          value={sessionName}
+          onChange={(e) => setSessionName(e.target.value)}
+          style={{ marginBottom: "16px" }}
+        />
+        <br />
         <Button variant="contained" color="success" onClick={handleStartDriveSession}>
           Start Drive Session
         </Button>
@@ -126,7 +128,6 @@ export default function ObdDemo() {
     );
   }
 
-  // Render main content if a session is active
   return (
     <Box className={styles.pageContainer}>
       {/* Red Stop Session Button at the top */}
