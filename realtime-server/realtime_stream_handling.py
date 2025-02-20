@@ -58,7 +58,7 @@ CLIP_INPUT_SIZE = 224
 # https://github.com/zahid-isu/DriveCLIP/tree/main?tab=readme-ov-file
 CLIP_MODEL_PATH_BODY = "dmd29_vitbl14-hypc_429_1000_ft.pkl"
 EAR_THRESHOLD = 0.25
-MAR_THRESHOLD = 0.28
+MAR_THRESHOLD = 0.25
 
 # Setup cv2 classifiers to detect a person in the frame
 faceCascade = cv2.CascadeClassifier(
@@ -104,15 +104,15 @@ except Exception as e:
 
 # Map indices to labels for body stream regression model output
 body_stream_index_to_label = {
-    0: "Drinking beverage",
-    1: "Adjusting hair, glasses, or makeup",
+    0: "Drinking or eating",
+    1: "Adjusting hair or makeup",
     2: "Talking on phone",
     3: "Reaching beside or behind",  # Was originally "Adjusting Radio or AC" but changed for performance
     4: "Reaching beside or behind",
     5: "Reaching beside or behind",
     6: "Driving Safely",
     7: "Talking to passenger",
-    8: "Texting/using phone",
+    8: "Texting or using phone",
     9: "Yawning",
 }
 
