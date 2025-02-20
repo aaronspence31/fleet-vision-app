@@ -119,9 +119,12 @@ body_stream_index_to_label = {
 # Setup buffers to hold the predictions data for all frames in the current second
 face_stream_cursecond_buffer = Queue()
 body_stream_cursecond_buffer = Queue()
-# Thread safe buffers for viewing the video streams and predictions in real-time
+# Thread safe buffers for viewing the video streams and predictions for the current frame in real-time
 face_stream_data_buffer = Queue(maxsize=1)
 body_stream_data_buffer = Queue(maxsize=1)
+# Thread safe buffers for viewing the video streams and predictions for the current second in real-time
+face_stream_second_data_buffer = Queue(maxsize=1)
+body_stream_second_data_buffer = Queue(maxsize=1)
 # Setup db streaming buffers
 face_frame_buffer_db = Queue()
 body_frame_buffer_db = Queue()
@@ -278,7 +281,7 @@ def process_stream_face(url):
     Args:
         url (str): The camera streaming endpoint.
     """
-    global frame_count_face, face_stream_data_buffer, face_thread_kill
+    global frame_count_face, face_stream_data_buffer, face_stream_second_data_buffer, face_thread_kill
     global face_frame_buffer_db, face_stream_cursecond_buffer
     global current_session_id
 
@@ -353,22 +356,14 @@ def process_stream_face(url):
                 # Measure the DB operation time
                 db_elapsed = (time.time() - db_start_time) * 1000
 
-                # Optionally push a final entry to the front-end with the aggregated classification
-                current_entry = None
-                if face_stream_data_buffer.full():
-                    current_entry = face_stream_data_buffer.get_nowait()
-
-                final_image = current_entry["image"] if current_entry else None
-                face_stream_data_buffer.put(
+                # Push a final entry to the front-end with the aggregated classification
+                if face_stream_second_data_buffer.full():
+                    face_stream_second_data_buffer.get_nowait()
+                face_stream_second_data_buffer.put(
                     {
-                        "image": final_image,
+                        "timestamp": last_second,
                         "eye_prediction": majority_eye,
                         "mouth_prediction": majority_mouth,
-                        "ear_score": None,  # optional
-                        "mar_score": None,  # optional
-                        "frame_number": None,
-                        "timestamp": last_second,
-                        "processing_time": None,
                     }
                 )
 
@@ -544,10 +539,10 @@ def process_stream_face(url):
         face_stream_data_buffer.put(
             {
                 "image": frame_base64,
-                "eye_prediction": None,  # final classification done only once per second
-                "mouth_prediction": None,  # final classification
-                "ear_score": ear_score,  # optional
-                "mar_score": mar_score,  # optional
+                "eye_prediction": eye_classification,
+                "mouth_prediction": mouth_classification,
+                "ear_score": ear_score,
+                "mar_score": mar_score,
                 "frame_number": frame_count_face,
                 "timestamp": now_second,
                 "processing_time": total_time,
@@ -731,7 +726,7 @@ def process_stream_body(url):
     """
 
     global frame_count_body, clip_model, clip_preprocess, clip_classifier_body
-    global body_stream_data_buffer, body_frame_buffer_db, body_thread_kill
+    global body_stream_data_buffer, body_stream_second_data_buffer, body_frame_buffer_db, body_thread_kill
     global body_stream_cursecond_buffer, current_session_id
 
     logger.info(
@@ -1041,8 +1036,8 @@ def process_stream_body(url):
 # PUT ALL CAMERA STREAM ROUTES BELOW -----------------------------------------------------------------------
 
 
-@realtime_camera_stream_handling.route("/face_stream_view")
-def face_stream_view():
+@realtime_camera_stream_handling.route("/face_per_frame_stream_view")
+def face_per_frame_stream_view():
     global face_stream_data_buffer
 
     def generate():
@@ -1050,6 +1045,27 @@ def face_stream_view():
             try:
                 while not face_stream_data_buffer.empty():
                     frame = face_stream_data_buffer.get_nowait()
+                    yield f"data: {json.dumps(frame)}\n\n"
+            except queue.Empty:
+                pass
+            time.sleep(0.05)
+
+    response = Response(generate(), mimetype="text/event-stream")
+    response.headers.add("Access-Control-Allow-Origin", "*")
+    response.headers.add("Cache-Control", "no-cache")
+    response.headers.add("Connection", "keep-alive")
+    return response
+
+
+@realtime_camera_stream_handling.route("/face_per_second_stream_view")
+def face_per_second_stream_view():
+    global face_stream_second_data_buffer
+
+    def generate():
+        while True:
+            try:
+                while not face_stream_second_data_buffer.empty():
+                    frame = face_stream_second_data_buffer.get_nowait()
                     yield f"data: {json.dumps(frame)}\n\n"
             except queue.Empty:
                 pass
@@ -1213,7 +1229,7 @@ def process_obd_data(obd_data):
       - The database-buffering operation.
       - The total processing time for each frame.
     """
-    global last_second_obd, frame_count_obd, obd_frame_buffer_db, obd_cursecond_buffer
+    global last_second_obd, frame_count_obd, obd_frame_buffer_db, obd_cursecond_buffer, obd_stream_second_data_buffer, obd_stream_data_buffer
 
     # Record the start time of the pipeline for this frame.
     pipeline_start = time.time()
@@ -1302,7 +1318,7 @@ def process_obd_data(obd_data):
 
         finalize_elapsed = (time.time() - finalize_start) * 1000
 
-        logger.info(
+        logger.debug(
             f"OBD_STREAM: Finalized second {last_second_obd} in {finalize_elapsed:.2f}ms "
             f"(DB op: {db_elapsed:.2f}ms). Aggregated values - Speed: {avg_speed}, RPM: {avg_rpm}, "
             f"Check Engine On: {majority_check_engine_on}, Num DTC Codes: {avg_num_dtc_codes}"
@@ -1341,7 +1357,7 @@ def process_obd_data(obd_data):
     obd_stream_data_buffer.put(obd_stream_buffer_entry)
 
     total_pipeline_time = (time.time() - pipeline_start) * 1000
-    logger.info(
+    logger.debug(
         f"OBD_STREAM: Processed frame {frame_count_obd} in {total_pipeline_time:.2f}ms - "
         f"Speed: {obd_data.get('speed', -1)}, RPM: {obd_data.get('rpm', -1)}, "
         f"Check Engine On: {obd_data.get('check_engine_on', None)}, Num DTC Codes: {obd_data.get('num_dtc_codes', -1)}"

@@ -71,7 +71,7 @@ export default function ObdDemo() {
     <Box className={styles.pageContainer}>
       <Box className={styles.section}>
         <Typography variant="h5" textAlign="center" gutterBottom>
-          OBD Data – Per Frame Classification
+          OBD Data – Per Frame
         </Typography>
         <TableContainer component={Paper} className={styles.tableContainer}>
           <Table stickyHeader>
@@ -105,7 +105,7 @@ export default function ObdDemo() {
 
       <Box className={styles.section}>
         <Typography variant="h5" textAlign="center" gutterBottom>
-          OBD Data – Per Second Aggregated Classification
+          OBD Data – Per Second Aggregated
         </Typography>
         <TableContainer component={Paper} className={styles.tableContainer}>
           <Table stickyHeader>

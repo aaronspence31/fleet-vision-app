@@ -10,6 +10,7 @@ import {
   TimeToLeave,
   Face,
   Accessibility,
+  Speed,
 } from "@mui/icons-material";
 import { useRouter, usePathname } from "next/navigation";
 const anonymous = Anonymous_Pro({ weight: "700", subsets: ["latin"] });
@@ -102,7 +103,7 @@ const SideBar = () => {
           ].join(" ")}
           onClick={() => router.push("/obddemo")}
         >
-          <Accessibility className={styles.icon} />
+          <Speed className={styles.icon} />
           <Typography
             className={anonymous.className}
             sx={{ typography: { xl: "h5", lg: "h6" } }}
