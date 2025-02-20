@@ -14,30 +14,24 @@ const int RX2_PIN = 16;
 const int TX2_PIN = 17;
 
 WiFiClientSecure client;
+HTTPClient http;
 
 void sendJsonToServer(const String &jsonData)
 {
   if (WiFi.status() == WL_CONNECTED)
   {
-    client.setInsecure();
+    static bool http_initialized = false;
 
-    HTTPClient http;
-    http.begin(client, "https://ghastly-singular-snake.ngrok.app/receive_obd_data");
-
-    http.addHeader("Content-Type", "application/json");
-
-    int httpResponseCode = http.POST(jsonData);
-
-    if (httpResponseCode > 0)
+    if (!http_initialized)
     {
-      Serial.printf("HTTP Response code: %d\n", httpResponseCode);
-    }
-    else
-    {
-      Serial.printf("Error code: %d\n", httpResponseCode);
+      client.setInsecure();
+      http.begin(client, "https://ghastly-singular-snake.ngrok.app/receive_obd_data");
+      http.addHeader("Content-Type", "application/json");
+      http_initialized = true;
     }
 
-    http.end();
+    // Send asynchronously - don't wait for response
+    http.sendRequest("POST", jsonData.c_str());
   }
 }
 
@@ -85,5 +79,4 @@ void loop()
       jsonBuffer += c;
     }
   }
-  delay(10);
 }
