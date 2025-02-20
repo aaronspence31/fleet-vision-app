@@ -1646,6 +1646,6 @@ def is_session_active():
     global current_session_id
 
     is_active = current_session_id is not None
-    logger.debug(f"Session active check - Result: {is_active}")
+    logger.info(f"Session active check - Result: {is_active}")
 
     return make_response("", 200 if is_active else 404)
