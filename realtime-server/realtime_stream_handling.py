@@ -58,7 +58,7 @@ CLIP_INPUT_SIZE = 224
 # https://github.com/zahid-isu/DriveCLIP/tree/main?tab=readme-ov-file
 CLIP_MODEL_PATH_BODY = "dmd29_vitbl14-hypc_429_1000_ft.pkl"
 EAR_THRESHOLD = 0.25
-MAR_THRESHOLD = 0.25
+MAR_THRESHOLD = 0.35
 
 # Setup cv2 classifiers to detect a person in the frame
 faceCascade = cv2.CascadeClassifier(
