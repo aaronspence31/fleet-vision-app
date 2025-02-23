@@ -414,8 +414,8 @@ def process_stream_face(url):
         if len(faces) == 0:
             # If no face found, we label "Unknown"
             font = cv2.FONT_HERSHEY_SIMPLEX
-            font_scale = 0.8
-            thickness = 2
+            font_scale = 0.4
+            thickness = 1
             text_to_draw = "Unknown"
             (text_width, text_height), baseline = cv2.getTextSize(
                 text_to_draw, font, font_scale, thickness
@@ -480,9 +480,9 @@ def process_stream_face(url):
                 eye_text,
                 (ex, ey - 10),
                 cv2.FONT_HERSHEY_SIMPLEX,
-                0.6,
+                0.4,
                 eye_color,
-                2,
+                1,
             )
 
             # (b) Mouth Aspect Ratio
@@ -513,9 +513,9 @@ def process_stream_face(url):
                 mouth_text,
                 (mx, my - 10),
                 cv2.FONT_HERSHEY_SIMPLEX,
-                0.6,
+                0.4,
                 mouth_color,
-                2,
+                1,
             )
 
         # Encode frame for streaming
@@ -887,8 +887,8 @@ def process_stream_body(url):
 
                 # Draw the prediction + probability in the top-right corner of the frame
                 font = cv2.FONT_HERSHEY_SIMPLEX
-                font_scale = 0.8
-                thickness = 2
+                font_scale = 0.6
+                thickness = 1
                 text_to_draw = f"{drawn_text} ({prob_score:.2f})"
 
                 (text_width, text_height), baseline = cv2.getTextSize(
@@ -937,8 +937,8 @@ def process_stream_body(url):
                 logger.error(f"BODY_STREAM: Error in inference: {str(e)}")
 
                 font = cv2.FONT_HERSHEY_SIMPLEX
-                font_scale = 0.8
-                thickness = 2
+                font_scale = 0.6
+                thickness = 1
                 text_to_draw = "Unknown"
 
                 (text_width, text_height), baseline = cv2.getTextSize(
@@ -964,8 +964,8 @@ def process_stream_body(url):
         else:
             # If no person is detected (not currently used in practice)
             font = cv2.FONT_HERSHEY_SIMPLEX
-            font_scale = 0.8
-            thickness = 2
+            font_scale = 0.6
+            thickness = 1
             text_to_draw = "Unknown"
 
             (text_width, text_height), baseline = cv2.getTextSize(
