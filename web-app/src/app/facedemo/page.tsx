@@ -160,8 +160,8 @@ export default function FaceDemo() {
               ref={faceImgRef}
               src=""
               className={styles.video}
-              width={1280}
-              height={720}
+              width={240}
+              height={240}
               alt="Live Face Stream"
             />
           </Box>

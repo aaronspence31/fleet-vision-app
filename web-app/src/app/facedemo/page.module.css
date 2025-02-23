@@ -22,10 +22,9 @@
 }
 
 .cameraWrapper {
-  width: 100%;
-  max-width: 1280px;
-  height: auto;
-  border-radius: 16px;
+  width: 240px;  /* Updated from 100% */
+  height: 240px; /* Added fixed height */
+  border-radius: 16px; 
   display: flex;
   justify-content: center;
   align-items: center;
@@ -33,9 +32,10 @@
 }
 
 .video {
-  width: 100%;
-  height: auto;
+  width: 240px;    /* Updated from 100% */
+  height: 240px;   /* Updated from auto */
   border-radius: 16px;
+  object-fit: contain; /* Added to maintain aspect ratio */
 }
 
 .tableContainer {
