@@ -16,14 +16,17 @@
     "@mui/x-charts": "^7.9.0",
     "@mui/x-data-grid": "^7.9.0",
     "axios": "^1.7.2",
+    "d3": "^7.9.0",
     "firebase": "^11.2.0",
     "mui": "^0.0.1",
     "next": "14.2.4",
     "react": "^18",
     "react-dom": "^18",
-    "react-minimal-pie-chart": "^8.4.0"
+    "react-minimal-pie-chart": "^8.4.0",
+    "react-select": "^5.10.0"
   },
   "devDependencies": {
+    "@types/d3": "^7.4.3",
     "@types/node": "^20",
     "@types/react": "^18",
     "@types/react-dom": "^18",

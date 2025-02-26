@@ -1,0 +1,5 @@
+<svg width="350" height="50" viewBox="179 208 350 50" xmlns="http://www.w3.org/2000/svg"><g fill="none" fill-rule="evenodd" transform="translate(179 208)"><rect fill="#3378F6" width="350" height="50" rx="8"/><path d="M288 8.5v30" stroke="#FFF" stroke-width="2" stroke-linecap="square"/><path d="M24.1 20.05c6.1 0 11 4.9 11 11v3c0 .6.4 1 1 1h2c.6 0 1-.4 1-1v-3c0-8.3-6.7-15-15-15h-.6c-.4 0-.7-.5-.4-.9l1-1c.2-.2.3-.4.3-.7 0-.3-.1-.5-.3-.7l-1.4-1.4c-.2-.2-.4-.3-.7-.3-.3 0-.5.1-.7.3l-6 6c-.2.2-.3.5-.3.7 0 .3.1.5.3.7l6 6c.2.2.4.3.7.3.3 0 .5-.1.7-.3l1.4-1.4c.2-.2.3-.4.3-.7 0-.3-.1-.5-.3-.7l-1-1c-.3-.3-.1-.9.4-.9h.6Z" fill="#FFF"/><text font-family="Helvetica" font-size="20" fill="#FFF">
+      <tspan x="84" y="30">7th Ave, New York…</tspan>
+    </text><text font-family="Helvetica" font-size="14" fill="#FFF">
+      <tspan x="299" y="29">100m</tspan>
+    </text></g></svg>
