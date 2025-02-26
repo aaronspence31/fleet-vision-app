@@ -39,9 +39,9 @@ def handle_exception(e):
 if __name__ == "__main__":
     logger.info("Initializing server...")
 
-    # -------------------------------
+    # --------------------------------
     # Pyngrok Tunnel Setup
-    # -------------------------------
+    # --------------------------------
     # Retrieve the ngrok auth token from environment variables loaded from .env.
     ngrok_auth_token = os.environ.get("NGROK_AUTH_TOKEN", "")
     if not ngrok_auth_token:

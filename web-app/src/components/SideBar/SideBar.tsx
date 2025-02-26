@@ -48,7 +48,7 @@ const SideBar = () => {
             className={anonymous.className}
             sx={{ typography: { xl: "h5", lg: "h6" } }}
           >
-            Dashboard
+            Home
           </Typography>
         </Box>
         <Box
