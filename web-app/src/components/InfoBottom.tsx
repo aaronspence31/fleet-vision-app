@@ -2,7 +2,7 @@
 import { useEffect, useRef } from "react";
 import * as d3 from "d3";
 
-const InfoBottom = ({ tripDistance }) => {
+const InfoBottom = ({ tripDistance }: { tripDistance: number }) => {
   const containerRef = useRef(null);
 
   useEffect(() => {
