@@ -18,6 +18,7 @@ interface FaceSessionDataFrames { eyeClassification: string, mouthClassification
 export interface OBDSessionData {
   created_at: Date
   session_id: string
+  session_name?: string
   session_frames: OBDSessionDataFrames[]
 }
 
@@ -30,7 +31,7 @@ const safetyScoreMap: any = {
   reaching_beside_or_behind: -4.5,
   adjusting_hair_or_makeup: -1.8,
   talking_to_passenger: -7,
-  Yawning: -4,
+  yawning: -2,
   driving_safely: 3,
 };
 
@@ -58,18 +59,19 @@ export const getDateTimeValues = (date: Date) => {
 export const getSafetyScore = (body_session: BodySessionData[], face_session: FaceSessionData[], obd_session: OBDSessionData[]) => {
   let score = 0;
   let scoreCount = 0;
-  if (body_session.length == 0 || face_session.length == 0 || obd_session.length == 0) return score
+  if (body_session.length == 0 || face_session.length == 0 || obd_session.length == 0 || !body_session[0] || !face_session[0] || !obd_session[0]) return score
   body_session.forEach((session: BodySessionData, index: number) => {
     let currentStartIndex = 0;
-    while (currentStartIndex <= session.session_frames.length) {
+    while (currentStartIndex < session.session_frames.length) {
       const classifications: any = countFrameOccurrences(session.session_frames.slice(currentStartIndex, currentStartIndex+20))
       currentStartIndex += 20;
       let modeClassification = Object.keys(classifications).reduce((a, b) => classifications[a] > classifications[b] ? a : b);
       modeClassification = modeClassification.toLowerCase().replaceAll(" ", "_");
+      console.log(modeClassification)
       if (modeClassification != 'driving_safely'){
         const faceModifier = getFaceModifiers(face_session[index].session_frames.slice(currentStartIndex, currentStartIndex+20));
         const obdModifier = getOBDModifier(obd_session[index].session_frames.slice(currentStartIndex, currentStartIndex+20));
-        score += (safetyScoreMap[modeClassification] * faceModifier * obdModifier);
+        score += ((safetyScoreMap[modeClassification] || 0) * faceModifier * obdModifier);
       }
       else{
         score += safetyScoreMap[modeClassification]
@@ -104,7 +106,6 @@ export const countFrameOccurrences = (sessionFrames: any[]) => {
             classificationCounts[classification] = (classificationCounts[classification] || 0) + 1;
         }
     });
-
     return classificationCounts
   
 }
@@ -171,17 +172,26 @@ const getOBDModifier = (OBD_session_frames: OBDSessionDataFrames[]) => {
 
 }
 
-export const getDrowsyPercentange = (face_session: FaceSessionData) => {
+export const getDrowsyPercentange = (face_session: FaceSessionData, body_session: BodySessionData) => {
   if (!face_session) return 0;
   let eyeClosedCount = 0;
+  let yawnCount = 0;
 
   face_session.session_frames.forEach((frame: FaceSessionDataFrames) => {
       if (frame.eyeClassification === 'Eyes Closed') {
           eyeClosedCount++;
       }
   })
+
+  body_session.session_frames.forEach((frame: BodySessionDataFrames) => {
+      if (frame.classification === 'Yawning') {
+        yawnCount++;
+      }
+  })
+
   const eyeClosePercentage = (eyeClosedCount / face_session.session_frames.length) * 100;
-  return Math.floor(eyeClosePercentage);
+  const yanwPercentage = (yawnCount / body_session.session_frames.length) * 100;
+  return Math.floor(eyeClosePercentage + yanwPercentage / 2);
 }
 
 export const calculateDistance = (obd_session: OBDSessionDataFrames[]) => {
@@ -195,10 +205,8 @@ export const calculateDistance = (obd_session: OBDSessionDataFrames[]) => {
     const prev = obd_session[i - 1];
     const curr = obd_session[i];
 
-      const timeDiff = curr.timestamp - prev.timestamp; // Time difference in seconds
+      const timeDiff = curr.timestamp /1000 - prev.timestamp / 1000; // Time difference in seconds
       const speedAvg = (prev.speed + curr.speed) / 2; // Average speed (assuming linear change)
-      console.log("Speed avg: ", speedAvg)
-      console.log("Time diff: ", timeDiff)
       totalDistance += (speedAvg * timeDiff) / 3600; // Convert seconds to hours
   }
 
@@ -247,13 +255,13 @@ export const parseFrameOccurences = (classifications: any) => {
   }));
 }
 
-export const generateSessionSelectList = (sessions: BodySessionData[]) => {
+export const generateSessionSelectList = (sessions: BodySessionData[] | OBDSessionData[]) => {
   const sessionSelectList: {value: string, label: string}[] = []
 
-  sessions.forEach((session: BodySessionData, index: number) => {
+  sessions.forEach((session: BodySessionData | OBDSessionData, index: number) => {
     const sessionSelectObj = {
       value: session.session_id,
-      label: session.session_name ? session.session_name : `Session ${index + 1}`
+      label: session?.session_name ? session.session_name : `Session ${index + 1}`
     }
     sessionSelectList.push(sessionSelectObj)
   });

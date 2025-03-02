@@ -1,7 +1,7 @@
-.ImageBox {
-  position: relative;
-  top: 100;
-  left: 0;
-  right: 0;
-  margin-inline: auto;
+.SessionSelectContainer {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  margin-top: 20px;
+  margin-bottom: 20px;
 }

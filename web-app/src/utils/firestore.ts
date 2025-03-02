@@ -1,14 +1,43 @@
-import { getDocs, query, collection, orderBy, limit } from 'firebase/firestore';
+import { getDocs, query, collection, orderBy, limit, where, writeBatch, doc} from 'firebase/firestore';
 import { BodySessionData, FaceSessionData, OBDSessionData } from './general';
 import { db } from "@/lib/firebase";
 
-export const getBodyData = async () => {
-    const session_query = query(collection(db, "body_drive_sessions"), orderBy("created_at", "desc"), limit(2));
+export const loadBodySessions = async () => {
+    const session_query = query(collection(db, "body_drive_sessions"), orderBy("created_at", "desc"));
     const sessionsSnapshot = await getDocs(session_query);
 
+    return getBodyData(sessionsSnapshot);
+}
+
+export const loadNewBodySessions = async (sessions: BodySessionData[]) => {
+    const exclusionList = getCurrentSessionIds(sessions);
+
+    const chunkedIds = [];
+    for (let i = 0; i < exclusionList.length; i += 10) {
+      chunkedIds.push(exclusionList.slice(i, i + 10));
+    }
+
+    const bodySessionsRef = collection(db, "body_drive_sessions");
+
+    const queryPromises = chunkedIds.map(chunk => {
+        return getDocs(query(bodySessionsRef, where("session_id", "not-in", chunk)));
+      });
+
+    const querySnapshots = await Promise.all(queryPromises);
     const formattedData: BodySessionData[] = [];
 
-    for (const sessionDoc of sessionsSnapshot.docs) {
+    for (const snapshot of querySnapshots) {
+        const data = await getBodyData(snapshot);
+        formattedData.push(...data);
+    }
+
+    return formattedData;
+}
+
+const getBodyData = async (sessionSnapshot: any) => {
+    const formattedData: BodySessionData[] = [];
+
+    for (const sessionDoc of sessionSnapshot.docs) {
         const BodySessionData = sessionDoc.data();
         const sessionId = sessionDoc.id;
 
@@ -16,11 +45,13 @@ export const getBodyData = async () => {
         const sessionObject: any = {
             session_id: sessionId,
             created_at: BodySessionData.created_at.toDate() || 0,
-            session_frames: []
+            session_frames: [],
+            session_name: BodySessionData.session_name || ""
         };
 
         // Determine nested collection name
-        const classificationsRef = collection(sessionDoc.ref, "body_drive_session_classifications");
+        
+        const classificationsRef = query(collection(sessionDoc.ref, "body_drive_session_classifications"), orderBy("timestamp", "desc"));
         const classificationsSnapshot = await getDocs(classificationsRef);
 
         // Populate session_frames array
@@ -35,17 +66,21 @@ export const getBodyData = async () => {
         // Add session object to the array
         formattedData.push(sessionObject);
     }
-
     return formattedData;
 }
 
-export const getFaceData = async () => {
-    const session_query = query(collection(db, "face_drive_sessions"), orderBy("created_at", "desc"), limit(2));
+
+export const loadFaceSessions = async () => {
+    const session_query = query(collection(db, "face_drive_sessions"), orderBy("created_at", "desc"));
     const sessionsSnapshot = await getDocs(session_query);
 
+    return getFaceData(sessionsSnapshot);
+}
+
+const getFaceData = async (sessionSnapshot: any) => {
     const formattedData: FaceSessionData[] = [];
 
-    for (const sessionDoc of sessionsSnapshot.docs) {
+    for (const sessionDoc of sessionSnapshot.docs) {
         const BodySessionData = sessionDoc.data();
         const sessionId = sessionDoc.id;
 
@@ -77,13 +112,42 @@ export const getFaceData = async () => {
     return formattedData;
 }
 
-export const getOBDData = async () => {
-    const session_query = query(collection(db, "obd_drive_sessions"), orderBy("created_at", "desc"), limit(2));
+export const loadNewFaceSessions = async (sessions: FaceSessionData[]) => {
+    const exclusionList = getCurrentSessionIds(sessions);
+
+    const chunkedIds = [];
+    for (let i = 0; i < exclusionList.length; i += 10) {
+      chunkedIds.push(exclusionList.slice(i, i + 10));
+    }
+
+    const bodySessionsRef = collection(db, "face_drive_sessions");
+
+    const queryPromises = chunkedIds.map(chunk => {
+        return getDocs(query(bodySessionsRef, where("session_id", "not-in", chunk)));
+      });
+
+    const querySnapshots = await Promise.all(queryPromises);
+    const formattedData: FaceSessionData[] = [];
+
+    for (const snapshot of querySnapshots) {
+        const data = await getFaceData(snapshot);
+        formattedData.push(...data);
+    }
+
+    return formattedData;
+}
+
+export const loadOBDSessions = async () => {
+    const session_query = query(collection(db, "obd_drive_sessions"), orderBy("created_at", "desc"));
     const sessionsSnapshot = await getDocs(session_query);
 
+    return getOBDData(sessionsSnapshot);
+}
+
+const getOBDData = async (sessionSnapshot: any) => {
     const formattedData: OBDSessionData[] = [];
 
-    for (const sessionDoc of sessionsSnapshot.docs) {
+    for (const sessionDoc of sessionSnapshot.docs) {
         const BodySessionData = sessionDoc.data();
         const sessionId = sessionDoc.id;
 
@@ -91,7 +155,8 @@ export const getOBDData = async () => {
         const sessionObject: any = {
             session_id: sessionId,
             created_at: BodySessionData.created_at.toDate() || 0,
-            session_frames: []
+            session_frames: [],
+            session_name: BodySessionData.session_name || ""
         };
 
         const classificationsRef = collection(sessionDoc.ref, "obd_drive_session_classifications");
@@ -116,4 +181,33 @@ export const getOBDData = async () => {
     }
 
     return formattedData;
+}
+
+export const loadNewOBDSessions = async (sessions: OBDSessionData[]) => {
+    const exclusionList = getCurrentSessionIds(sessions);
+
+    const chunkedIds = [];
+    for (let i = 0; i < exclusionList.length; i += 10) {
+      chunkedIds.push(exclusionList.slice(i, i + 10));
+    }
+
+    const bodySessionsRef = collection(db, "obd_drive_sessions");
+
+    const queryPromises = chunkedIds.map(chunk => {
+        return getDocs(query(bodySessionsRef, where("session_id", "not-in", chunk)));
+      });
+
+    const querySnapshots = await Promise.all(queryPromises);
+    const formattedData: OBDSessionData[] = [];
+
+    for (const snapshot of querySnapshots) {
+        const data = await getOBDData(snapshot);
+        formattedData.push(...data);
+    }
+
+    return formattedData;
+}
+
+const getCurrentSessionIds = (sessions: (BodySessionData[] | FaceSessionData[] | OBDSessionData[])) => {
+    return sessions.map((session) => session.session_id);
 }

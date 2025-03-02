@@ -1,10 +1,14 @@
 "use client";
 import React, { useState, useEffect } from "react";
-import { Box, Typography, Button } from "@mui/material";
+import { Box, Typography } from "@mui/material";
 import styles from "./page.module.css";
 import DisplayCard from "@/components/common/DisplayCard";
-import { getBodyData, getFaceData, getOBDData } from "@/utils/firestore";
-import { Anonymous_Pro, Stardos_Stencil } from "next/font/google";
+import {
+  loadBodySessions,
+  loadFaceSessions,
+  loadOBDSessions,
+} from "@/utils/firestore";
+import { Anonymous_Pro } from "next/font/google";
 import { PieChart } from "@mui/x-charts/PieChart";
 import { LineChart } from "@mui/x-charts/LineChart";
 import Backdrop from "@mui/material/Backdrop";
@@ -52,11 +56,11 @@ const reactSelectStyles = {
   }),
   option: (styles: any, state: { isSelected: any }) => ({
     ...styles,
-    color: state.isSelected ? "white" : "#01b5e1",
-    backgroundColor: state.isSelected ? " #3d8cff" : "white",
+    color: "#01b5e1",
+    backgroundColor: state.isSelected ? "lightgray" : "white",
     cursor: "pointer",
     "&:hover": {
-      backgroundColor: "rgba(189,197,209,.3)",
+      backgroundColor: "#3d8cff",
       color: "black",
     },
   }),
@@ -94,23 +98,26 @@ export default function Dashboard() {
   );
   const [selectedSessionIndex, setSelectedSessionIndex] = useState<number>(0);
 
+  const [selectionList, setSelectionList] = useState<
+    { value: String; label: string }[]
+  >([]);
+
   useEffect(() => {
     const loadData = async () => {
-      const localBodyData = await getBodyData();
+      const localBodyData = await loadBodySessions();
       setBodyData(localBodyData);
-      const localFaceData = await getFaceData();
+      const localFaceData = await loadFaceSessions();
       setFaceData(localFaceData);
-      const localOBDData = await getOBDData();
+      const localOBDData = await loadOBDSessions();
       setObdData(localOBDData);
     };
     loadData();
   }, []);
 
   useEffect(() => {
+    setSelectionList(generateSessionSelectList(bodyData));
     console.log("Body Data: ", bodyData);
-    console.log("Face Data: ", faceData);
-    console.log("OBD Data: ", obdData);
-  }, [bodyData, faceData, obdData]);
+  }, [bodyData]);
 
   const handleSelectedSessionUpdate = (e: any) => {
     const index = bodyData.findIndex(
@@ -198,15 +205,10 @@ export default function Dashboard() {
             >
               Selected Session
             </Typography>
-            {bodyData && (
+            {selectionList.length && (
               <Select
-                options={generateSessionSelectList(bodyData)}
-                defaultValue={{
-                  value: bodyData[0]?.session_id,
-                  label: bodyData[0]?.session_name
-                    ? bodyData[0]?.session_name
-                    : `Session ${1}`,
-                }}
+                options={selectionList}
+                defaultValue={selectionList[0]}
                 styles={reactSelectStyles}
                 onChange={handleSelectedSessionUpdate}
               />
@@ -227,7 +229,11 @@ export default function Dashboard() {
               className={anonymous.className}
               style={{ color: "#01b5e1" }}
             >
-              {getSafetyScore(bodyData, faceData, obdData)}
+              {getSafetyScore(
+                [bodyData[selectedSessionIndex]],
+                [faceData[selectedSessionIndex]],
+                [obdData[selectedSessionIndex]]
+              )}
             </Typography>
           </Box>
         </Box>
@@ -260,8 +266,7 @@ export default function Dashboard() {
                 sx={{ typography: { xl: "body1", lg: "body2" } }}
               >
                 Each point represents the safety score during the{" "}
-                <span style={{ fontStyle: "italic" }}>Nth</span> minute of
-                driving
+                <span style={{ fontStyle: "italic" }}>Nth</span> session
               </Typography>
             </Box>
           </DisplayCard>
@@ -277,9 +282,11 @@ export default function Dashboard() {
                 className={styles.ImageMaskContainer}
                 style={{
                   background: `linear-gradient(to top, #01b5e1 ${getDrowsyPercentange(
-                    faceData[selectedSessionIndex]
+                    faceData[selectedSessionIndex],
+                    bodyData[selectedSessionIndex]
                   )}%, transparent ${getDrowsyPercentange(
-                    faceData[selectedSessionIndex]
+                    faceData[selectedSessionIndex],
+                    bodyData[selectedSessionIndex]
                   )}%)`,
                 }}
               >
@@ -296,8 +303,11 @@ export default function Dashboard() {
                 sx={{ typography: { xl: "b1", lg: "b2" } }}
               >
                 The user displayed drowsy tendencies during{" "}
-                {getDrowsyPercentange(faceData[selectedSessionIndex])}% of the
-                last session
+                {getDrowsyPercentange(
+                  faceData[selectedSessionIndex],
+                  bodyData[selectedSessionIndex]
+                )}
+                % of the last session
               </Typography>
             </Box>
           </DisplayCard>
@@ -336,10 +346,6 @@ export default function Dashboard() {
                 sx={{ typography: { xl: "h3", lg: "h4" } }}
               >
                 Distraction <br /> Event <br /> Breakdown
-                <br />
-                <span className={styles.DistractionBreakdownDisclaimer}>
-                  Most Recent Session
-                </span>
               </Typography>
 
               <Box
@@ -347,7 +353,7 @@ export default function Dashboard() {
                   minWidth: "60%",
                   minHeight: "100%",
                   width: "60%",
-                  height: "100%",
+                  height: "350px",
                   maxWidth: "60%",
                   maxHeight: "100%",
                 }}
@@ -367,7 +373,7 @@ export default function Dashboard() {
                       outerRadius: 100,
                       paddingAngle: 5,
                       cornerRadius: 5,
-                      cy: "35%",
+                      cy: "30%",
                       highlightScope: { fade: "global", highlight: "item" },
                       faded: {
                         innerRadius: 30,
@@ -380,11 +386,19 @@ export default function Dashboard() {
                     "& .MuiChartsLegend-series text": {
                       fontSize: "0.7em !important",
                     },
+                    "& .MuiChartsLegend-root": {
+                      marginTop: "0.5rem !important",
+                    },
                   }}
                   slotProps={{
                     legend: {
-                      direction: "row",
+                      direction: "row", // Keep items in a row-based layout
                       position: { vertical: "bottom", horizontal: "middle" },
+                      padding: 10, // Add spacing around the legend
+                      itemMarkWidth: 20,
+                      itemMarkHeight: 2,
+                      markGap: 5,
+                      itemGap: 15, // Adjust spacing between legend items for alignment
                     },
                   }}
                 />
