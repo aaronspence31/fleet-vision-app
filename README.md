@@ -46,8 +46,6 @@ _Click the image above to watch the full demo video_
 
 ![System Architecture Diagram](documentation/system_architecture.png)
 
-_[TODO: Add system architecture diagram showing the flow of data from hardware devices through the server to the web application]_
-
 The Fleet Vision system consists of three main components:
 
 1. **Hardware Devices**: ESP32 cameras and OBD-II interface connected to the vehicle
