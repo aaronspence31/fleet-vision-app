@@ -10,22 +10,22 @@
 #include "camera_pins.h"
 
 // Aaron Pelham
-const char *ssid = "Home Network";
-const char *password = "Getthewifi#1";
+// const char *ssid = "Home Network";
+// const char *password = "Getthewifi#1";
 // Aaron Waterloo
 // const char *ssid = "SPIDER-LAN";
 // const char *password = "GreatPowerGreatResponsibility123!";
 // Aaron Hotspot
-// const char *ssid = "Aaron iPhone 15";
-// const char *password = "12345678";
+const char *ssid = "Aaron iPhone 15";
+const char *password = "12345678";
 
 WebServer server(80);
 
 // Narrow angle resolutions
 // framesize_t currentResolution = FRAMESIZE_240X240;
-// framesize_t currentResolution = FRAMESIZE_VGA; // 640x480
+framesize_t currentResolution = FRAMESIZE_VGA; // 640x480
 // Wide angle resolutions
-framesize_t currentResolution = FRAMESIZE_HVGA; // 480x320
+// framesize_t currentResolution = FRAMESIZE_HVGA; // 480x320
 // framesize_t currentResolution = FRAMESIZE_HD; // 1280x720
 
 // Function to print FPS to the Serial Monitor

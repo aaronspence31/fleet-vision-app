@@ -10,14 +10,14 @@
 #include "camera_pins.h"
 
 // Aaron Pelham
-const char *ssid = "Home Network";
-const char *password = "Getthewifi#1";
+// const char *ssid = "Home Network";
+// const char *password = "Getthewifi#1";
 // Aaron Waterloo
 // const char *ssid = "SPIDER-LAN";
 // const char *password = "GreatPowerGreatResponsibility123!";
 // Aaron Hotspot
-// const char *ssid = "Aaron iPhone 15";
-// const char *password = "12345678";
+const char *ssid = "Aaron iPhone 15";
+const char *password = "12345678";
 
 WebServer server(80);
 
