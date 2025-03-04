@@ -6,23 +6,11 @@
 
 Fleet Vision is a comprehensive vehicle monitoring and driver safety system designed to enhance fleet management and driver safety through real-time monitoring and analytics. The system combines computer vision, OBD-II vehicle data, and cloud-based analytics to provide a complete picture of driver behavior and vehicle performance.
 
-## Demo Highlights
-
-### Video Demonstration
+## Video Demonstration
 
 [![Fleet Vision Demo](thumbnail.png)](https://drive.google.com/file/d/1jhZySFJ_BmHR1zjNEgbxbeXLgKqwypyG/view?usp=sharing)
 
 _Click the image above to watch the full demo video_
-
-### System in Action
-
-![Dashboard Overview]
-
-_[TODO: Add an impressive screenshot of the main dashboard in action]_
-
-![Real-time Monitoring]
-
-_[TODO: Add a screenshot showing real-time driver monitoring with analytics]_
 
 ## Table of Contents
 
@@ -32,7 +20,6 @@ _[TODO: Add a screenshot showing real-time driver monitoring with analytics]_
 - [Software Components](#software-components)
 - [Installation and Setup](#installation-and-setup)
 - [Usage](#usage)
-- [Detailed Demos](#detailed-demos)
 
 ## Features
 
@@ -78,8 +65,8 @@ Data flows from the vehicle through the hardware devices to the real-time server
 
 ### OBD-II Interface
 
-- **ESP32 Microcontroller**: Connected to the CAN bus via MCP2515 CAN controller
-- **Longan Labs OBD-2 Dev Kit**: Used as the OBD-II interface for the vehicle
+- **ESP32 Microcontroller**: Connected to the vehicle's OBD-II port
+- **Longan Labs OBD-II Dev Kit**: Used to interface between the ESP32 and the vehicle's OBD-II port for real-time vehicle data collection
 
 ![Hardware Setup in Vehicle](hardware_setup_in_vehicle.png)
 
@@ -93,6 +80,7 @@ _The image above shows the ESP32 cameras and OBD-II interface installed in a veh
 - **Computer Vision Models**: Processes camera feeds for drowsiness and distraction detection
 - **Data Processing**: Analyzes OBD-II data for vehicle performance metrics
 - **Firebase Integration**: Stores processed data in Firebase
+- **Server Sent Events**: Sends classified data to the web application in real-time
 
 ### Web Application
 
@@ -111,7 +99,7 @@ _The image above shows the ESP32 cameras and OBD-II interface installed in a veh
 - ngrok account (for remote access to the real-time server)
 - Arduino IDE with ESP32 board support
 - ESP32-CAM AI-Thinker modules (2x)
-- Longan Labs OBD-2 Dev Kit
+- Longan Labs OBD-II Dev Kit
 - Jumper wires and breadboard
 
 ### Web Application Setup
@@ -175,30 +163,18 @@ _The image above shows the ESP32 cameras and OBD-II interface installed in a veh
 1. **Hardware Requirements**:
 
    - 2x ESP32-CAM AI-Thinker modules with OV2640 camera
-   - FTDI programmer or CP2102 USB-to-TTL converter for uploading code
-   - Jumper wires
    - 5V power supply
 
-2. **Wiring the ESP32-CAM for Programming**:
+2. **Installing the Code**:
 
-   - Connect the ESP32-CAM to the FTDI programmer:
-     - ESP32-CAM GND → FTDI GND
-     - ESP32-CAM 5V/VCC → FTDI VCC (5V)
-     - ESP32-CAM U0R (GPIO3) → FTDI TX
-     - ESP32-CAM U0T (GPIO1) → FTDI RX
-     - Connect GPIO0 to GND (only during programming)
-   - After uploading, disconnect GPIO0 from GND for normal operation
-
-3. **Installing the Code**:
-
-   - Open the Arduino IDE with ESP32 board support installed
+   - Open the Arduino IDE with the ESP32 board plugged in via Micro USB and ESP32 board support installed
    - Select "AI Thinker ESP32-CAM" from the boards menu
    - For the face monitoring camera:
      Open `hardware/esp32-camera-streaming/CameraWebServerFace.ino` in the Arduino IDE
    - For the body posture monitoring camera:
      Open `hardware/esp32-camera-streaming/CameraWebServerBody.ino` in the Arduino IDE
 
-4. **Configure WiFi Settings**:
+3. **Configure WiFi Settings**:
 
    - In each `.ino` file, update the WiFi credentials:
      ```cpp
@@ -206,37 +182,28 @@ _The image above shows the ESP32 cameras and OBD-II interface installed in a veh
      const char *password = "Your_WiFi_Password";
      ```
 
-5. **Upload the Code**:
+4. **Upload the Code**:
 
-   - Connect GPIO0 to GND
-   - Press the reset button on the ESP32-CAM
-   - Upload the code
-   - Disconnect GPIO0 from GND
-   - Press reset again to start normal operation
+   - Press the upload button in the Arduino IDE
 
-6. **Mounting the Cameras**:
-   - Face Camera: Mount facing the driver's face, ideally on the dashboard or A-pillar
-   - Body Camera: Mount with a wider view of the driver's upper body, ideally on the dashboard or center console
+5. **Mounting the Cameras**:
+   - Face Camera: Mount facing the driver's face, ideally on the front windshield
+   - Body Camera: Mount with a wider view of the driver's upper body, ideally on the side window
 
 #### OBD-II Interface Setup
 
 1. **Hardware Requirements**:
 
    - ESP32 development board
-   - MCP2515 CAN Bus module
-   - OBD-II to DB9 cable
+   - Longan Labs OBD-II Dev Kit
    - Jumper wires
-   - Breadboard
+   - Power supply for the ESP32
 
-2. **Wiring the CAN Bus Module**:
+2. **Wiring the Longan Labs OBD-II Dev Kit**:
 
-   - Connect the MCP2515 to the ESP32:
-     - MCP2515 CS → ESP32 GPIO9 (as defined in the code: `#define SPI_CS_PIN 9`)
-     - MCP2515 SO (MISO) → ESP32 MISO
-     - MCP2515 SI (MOSI) → ESP32 MOSI
-     - MCP2515 SCK → ESP32 SCK
-     - MCP2515 VCC → ESP32 3.3V
-     - MCP2515 GND → ESP32 GND
+   - Connect the Longan Labs OBD-II Dev Kit to the ESP32:
+     - Connect the OBD-II Dev Kit CAN interface to the ESP32's SPI pins
+     - Follow the pin configuration as defined in the `hardware/obd-streaming/FinalOBD.ino` file
 
 3. **Installing the Code**:
 
@@ -251,21 +218,20 @@ _The image above shows the ESP32 cameras and OBD-II interface installed in a veh
 
 5. **Connecting to the Vehicle**:
 
-   - Connect the OBD-II to DB9 cable to your vehicle's OBD-II port
-   - Connect the DB9 end to the CAN Bus module
+   - Connect the Longan Labs OBD-II Dev Kit directly to your vehicle's OBD-II port
    - Power on the ESP32 (can be powered via USB or an external 5V supply)
 
 6. **Testing the Connection**:
    - Start your vehicle
    - The ESP32 should connect to your WiFi network
-   - The real-time server should receive OBD-II data
+   - The real-time server should receive OBD-II data from the Longan Labs OBD-II Dev Kit
 
 ## Usage
 
 ### Starting a Monitoring Session
 
 1. Start the real-time server.
-2. Power on the ESP32 cameras and OBD-II interface.
+2. Power on the ESP32 cameras and the Longan Labs OBD-II Dev Kit.
 3. Open the web application.
 4. Navigate to the dashboard to view real-time data.
 
@@ -280,99 +246,3 @@ _The image above shows the ESP32 cameras and OBD-II interface installed in a veh
 1. Open the web application.
 2. Navigate to the "Analytics" section.
 3. View safety scores, performance metrics, and incident reports.
-
-## Detailed Demos
-
-### Main Dashboard
-
-![Dashboard]
-
-_[TODO: Add screenshot of the main dashboard]_
-
-The main dashboard provides an overview of all vehicle and driver metrics, including:
-
-- Current safety score
-- Recent driving sessions
-- Alert history
-- Performance trends
-
-### Vehicle Information Interface
-
-![Vehicle Info]
-
-_[TODO: Add screenshot of the vehicle info page]_
-
-The Vehicle Information interface displays:
-
-- Real-time speed and RPM gauges
-- Engine performance metrics
-- Trip distance and duration
-- Fuel efficiency data
-
-### Face Monitoring Demo
-
-![Face Monitoring]
-
-_[TODO: Add screenshot of the face monitoring interface]_
-
-The Face Monitoring system:
-
-- Detects driver drowsiness through eye closure detection
-- Monitors yawning frequency
-- Provides real-time alerts for drowsy driving
-- Records incidents for later review
-
-**Video Demo of Face Monitoring:**
-
-[![Face Monitoring Demo](https://img.youtube.com/vi/1jhZySFJ_BmH/0.jpg)](https://drive.google.com/file/d/1jhZySFJ_BmHR1zjNEgbxbeXLgKqwypyG/view?usp=sharing)
-
-_Click the image above to watch the face monitoring demo_
-
-### Body Posture Monitoring Demo
-
-![Body Posture Monitoring Interface](https://i.imgur.com/Ij9Yvqm.jpg)
-
-The Body Posture Monitoring system:
-
-- Detects distracted driving behaviors
-- Monitors driver position and movement
-- Identifies unsafe postures
-- Alerts when the driver is not focused on the road
-
-**Video Demo of Body Posture Monitoring:**
-
-[![Body Posture Monitoring Demo](https://i.imgur.com/Ij9Yvqm.jpg)](https://drive.google.com/file/d/1jhZySFJ_BmHR1zjNEgbxbeXLgKqwypyG/view?usp=sharing)
-
-_Click the image above to watch the body posture monitoring demo_
-
-### OBD-II Data Monitoring Demo
-
-![OBD-II Monitoring]
-
-_[TODO: Add screenshot of the OBD-II monitoring interface]_
-
-The OBD-II Monitoring system:
-
-- Captures real-time vehicle telemetry
-- Monitors engine performance parameters
-- Detects potential mechanical issues
-- Tracks fuel consumption and efficiency
-
-**Video Demo of OBD-II Monitoring:**
-
-[![OBD-II Monitoring Demo](https://img.youtube.com/vi/1jhZySFJ_BmH/0.jpg)](https://drive.google.com/file/d/1jhZySFJ_BmHR1zjNEgbxbeXLgKqwypyG/view?usp=sharing)
-
-_Click the image above to watch the OBD-II monitoring demo_
-
----
-
-## Note to Project Owner
-
-To complete this README, please:
-
-1. Add the system architecture diagram showing data flow between components
-2. Add screenshots of all interfaces (dashboard, vehicle info, face monitoring, body monitoring, OBD-II monitoring)
-3. Record and add video demonstrations for each monitoring system
-4. Update any missing configuration details or instructions
-
-These visual elements will greatly enhance the documentation and make it easier for users to understand the system.
