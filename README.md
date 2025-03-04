@@ -8,7 +8,7 @@ Fleet Vision is a comprehensive vehicle monitoring and driver safety system desi
 
 ## Video Demonstration
 
-[![Fleet Vision Demo](thumbnail.png)](https://drive.google.com/file/d/1jhZySFJ_BmHR1zjNEgbxbeXLgKqwypyG/view?usp=sharing)
+[![Fleet Vision Demo](documentation/thumbnail.png)](https://drive.google.com/file/d/1jhZySFJ_BmHR1zjNEgbxbeXLgKqwypyG/view?usp=sharing)
 
 _Click the image above to watch the full demo video_
 
@@ -44,7 +44,7 @@ _Click the image above to watch the full demo video_
 
 ## System Architecture
 
-![System Architecture Diagram]
+![System Architecture Diagram](documentation/system-architecture.png)
 
 _[TODO: Add system architecture diagram showing the flow of data from hardware devices through the server to the web application]_
 
@@ -68,7 +68,7 @@ Data flows from the vehicle through the hardware devices to the real-time server
 - **ESP32 Microcontroller**: Connected to the vehicle's OBD-II port
 - **Longan Labs OBD-II Dev Kit**: Used to interface between the ESP32 and the vehicle's OBD-II port for real-time vehicle data collection
 
-![Hardware Setup in Vehicle](hardware_setup_in_vehicle.png)
+![Hardware Setup in Vehicle](documentation/hardware_setup_in_vehicle.png)
 
 _The image above shows the ESP32 cameras and OBD-II interface installed in a vehicle_
 
