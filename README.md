@@ -44,7 +44,7 @@ _Click the image above to watch the full demo video_
 
 ## System Architecture
 
-![System Architecture Diagram](documentation/system-architecture.png)
+![System Architecture Diagram](documentation/system_architecture.png)
 
 _[TODO: Add system architecture diagram showing the flow of data from hardware devices through the server to the web application]_
 
