@@ -228,21 +228,62 @@ _The image above shows the ESP32 cameras and OBD-II interface installed in a veh
 
 ## Usage
 
+### Dashboard Overview
+
+1. Start the real-time server:
+   ```bash
+   cd realtime-server
+   python server.py
+   ```
+2. Launch the web application:
+   ```bash
+   cd web-app
+   npm run dev
+   ```
+3. Open your browser and navigate to `http://localhost:3000` to access the **Home** page dashboard.
+
 ### Starting a Monitoring Session
 
-1. Start the real-time server.
-2. Power on the ESP32 cameras and the Longan Labs OBD-II Dev Kit.
-3. Open the web application.
-4. Navigate to the dashboard to view real-time data.
+1. Navigate to any of the monitoring feed pages:
 
-### Viewing Historical Data
+   - **Face Feed** - Monitors driver facial expressions and detects drowsiness
+   - **Body Feed** - Tracks body posture and detects distracted driving
+   - **OBD Feed** - Displays real-time vehicle telemetry data
 
-1. Open the web application.
-2. Navigate to the "Sessions" section.
-3. Select a session to view detailed data.
+2. Enter a session name in the provided field (or use the default name).
 
-### Analyzing Driver Performance
+3. Click the "Start Drive Session" button to begin recording data.
 
-1. Open the web application.
-2. Navigate to the "Analytics" section.
-3. View safety scores, performance metrics, and incident reports.
+4. The page will display real-time video feed and classifications from the ESP32 cameras or OBD-II data.
+
+5. When finished, click "Stop Drive Session" to end recording and save the session data to Firebase.
+
+### Viewing Recorded Sessions
+
+1. After completing monitoring sessions, go to the **Home** page dashboard.
+
+2. Use the session selector dropdown to choose a specific recorded session.
+
+3. The dashboard will display:
+   - Safety score based on the selected session
+   - Detailed breakdown of facial, body posture, and vehicle data
+   - Charts showing event distribution and safety metrics
+
+### Analyzing Vehicle Data
+
+1. Navigate to the **Vehicle Information** page.
+
+2. Select a recorded session from the dropdown menu.
+
+3. View detailed metrics including:
+   - Average speed and RPM gauges
+   - Distance traveled
+   - Trip duration
+   - Vehicle performance statistics
+   - Session timeline with speed and RPM graphs
+
+### Live Monitoring Feeds
+
+- **Face Feed**: Real-time monitoring of driver's face with drowsiness detection
+- **Body Feed**: Real-time monitoring of driver's posture with distraction detection
+- **OBD Feed**: Real-time monitoring of vehicle telemetry data from the OBD-II interface
