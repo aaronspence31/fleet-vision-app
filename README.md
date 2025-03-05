@@ -10,7 +10,7 @@ Fleet Vision is a comprehensive vehicle monitoring and driver safety system desi
 
 [![Fleet Vision Demo](documentation/thumbnail.png)](https://drive.google.com/file/d/1jhZySFJ_BmHR1zjNEgbxbeXLgKqwypyG/view?usp=sharing)
 
-_Click the image above to watch the full demo video_
+_Click the image above to watch the full demo video, skip to 30:05 for demo_
 
 ## Table of Contents
 
